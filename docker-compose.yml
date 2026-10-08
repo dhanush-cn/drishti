@@ -42,5 +42,32 @@ services:
       retries: 10
       start_period: 30s
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    container_name: drishti-clickhouse
+    hostname: clickhouse
+    ports:
+      - "8123:8123"   # HTTP interface: curl, browser, debugging
+      - "9000:9000"   # native protocol: what the Go client uses
+    environment:
+      CLICKHOUSE_DB: drishti
+      CLICKHOUSE_USER: drishti
+      CLICKHOUSE_PASSWORD: drishti_dev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/config.d/memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    mem_limit: 6g
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "drishti", "--password", "drishti_dev", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 volumes:
   kafka-data:
+  clickhouse-data:

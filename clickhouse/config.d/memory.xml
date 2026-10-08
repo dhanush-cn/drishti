@@ -1,0 +1,6 @@
+<clickhouse>
+    <!-- Hard ceiling for the whole server: 5 GiB inside a 6 GB container -->
+    <max_server_memory_usage>5368709120</max_server_memory_usage>
+    <!-- Default mark cache is 5 GiB - sized for servers, not laptops -->
+    <mark_cache_size>536870912</mark_cache_size>
+</clickhouse>
