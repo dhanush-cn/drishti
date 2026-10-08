@@ -68,6 +68,28 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+  redis:
+    image: redis:8.10.2
+    container_name: drishti-redis
+    hostname: redis
+    ports:
+      - "6381:6379"
+    command:
+      - redis-server
+      - --maxmemory
+      - 400mb
+      - --maxmemory-policy
+      - volatile-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 volumes:
   kafka-data:
   clickhouse-data:
