@@ -1,4 +1,21 @@
 services:
+  receiver:
+    image: drishti-receiver:dev
+    build: .
+    depends_on:
+      - kafka
+    environment:
+      DRISHTI_LISTEN: ":4317"
+      DRISHTI_KAFKA_BROKERS: "kafka:29092"
+      GOMEMLIMIT: "400MiB"
+    ports:
+      - "14317:4317"
+    networks:
+      default: {}
+      otel-demo:
+        aliases:
+          - drishti-receiver
+    mem_limit: 512m
   kafka:
     image: apache/kafka:4.3.1
     container_name: drishti-kafka
@@ -93,3 +110,9 @@ services:
 volumes:
   kafka-data:
   clickhouse-data:
+
+networks:
+  default: {}
+  otel-demo:
+    external: true
+    name: opentelemetry-demo
