@@ -13,6 +13,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/dhanush-cn/drishti/internal/ingest"
+	"github.com/dhanush-cn/drishti/internal/partitioning"
 )
 
 type Config struct {
@@ -62,6 +63,11 @@ func New(cfg Config) (*Sink, error) {
 		kgo.ProducerBatchMaxBytes(cfg.BatchMaxBytes),
 		kgo.MaxBufferedBytes(cfg.MaxBufferedBytes),
 		kgo.RecordDeliveryTimeout(cfg.DeliveryTimeout),
+		// Explicit, not inherited: the load generator predicts key ->
+		// partition with the same constructor (docs/loadgen.md §7). It is
+		// franz-go's default (murmur2 for keyed records), so existing data
+		// keeps its mapping.
+		kgo.RecordPartitioner(partitioning.New()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka client: %w", err)

@@ -41,6 +41,7 @@ sender ──gRPC/gzip──► otlpgrpc (thin) ──► ingest (split, key, ti
 - Separate topic per signal: different schema, different consumers.
 - Known risk: one noisy service = one hot partition. That's week 3's hot-partition work.
 - Topics have 6 partitions (`scripts/create-topics.sh`). Adding partitions later remaps keys, so per-service ordering breaks across the change.
+- The partitioner is set explicitly through `internal/partitioning.New()`, not inherited. It is franz-go's default (`UniformBytesPartitioner`, murmur2 for keyed records, same as the Java client), so existing data keeps its key → partition mapping. The load generator predicts partitions with the same constructor (`docs/loadgen.md` §7). `TestNew_MatchesLibraryDefault` proves equivalence with the library default; `TestForKey_ObservedPairs` pins pairs observed in Kafka on 10 Oct (`smoke-svc-1`, `smoke-svc-2` → p0, `smoke-svc-0` → p2).
 
 ### 4. Backpressure: bounded wait, then retryable rejection; the backlog lives in the sender
 - Each export waits for Kafka acks before returning OK. Acking before Kafka (fire-and-forget) is faster but loses data on a crash, after we told the sender it was safe.
@@ -85,6 +86,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 | Deadline after broker death | in `kafkasink.Publish`, replace the async block with `return s.cl.ProduceSync(ctx, recs...).FirstErr()` | `TestPublish_BrokerDiesMidRunReturnsAtDeadline` fails at 3s (verified) |
 | Size cap | in `splitLogs`, change `<= maxBytes` to `<= maxBytes*100` | `TestSplitLogs_OversizedResourceIsSplitUnderLimitInOrder` |
 | Key → partition | in `kafkasink.Publish`, set `Key: nil` | `TestPublish_RoundTripKeysHeadersAndPartitioning` (keys not preserved) |
+| Explicit partitioner | in `partitioning.New()`, return `kgo.StickyKeyPartitioner(kgo.SaramaHasher(fnv32a))` (an FNV-1a `func([]byte) uint32`) | `TestForKey_ObservedPairs`, `TestNew_MatchesLibraryDefault`, `TestPublish_PartitionsMatchSharedPartitioner` |
 | Fail-fast topics | start the receiver before `create-topics.sh` | exits with `topic "otlp.logs" missing` |
 | Real backpressure | receiver + smoke running, `docker compose stop kafka`, run smoke again | smoke prints `Unavailable` after ~4s, receiver stays up; `start kafka` → smoke OK again |
 

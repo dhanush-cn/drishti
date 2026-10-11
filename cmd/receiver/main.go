@@ -24,7 +24,7 @@ import (
 
 func main() {
 	var (
-		listen         = flag.String("listen", env("DRISHTI_LISTEN", ":14317"), "gRPC listen address (4317 is taken by the demo collector)")
+		listen         = flag.String("listen", env("DRISHTI_LISTEN", ":14317"), "gRPC listen address (default :14317 for a native run, since the demo collector holds 4317 on the host; the container sets :4317 via DRISHTI_LISTEN)")
 		brokers        = flag.String("brokers", env("DRISHTI_KAFKA_BROKERS", "localhost:9092"), "comma-separated Kafka bootstrap brokers")
 		logsTopic      = flag.String("logs-topic", env("DRISHTI_LOGS_TOPIC", "otlp.logs"), "Kafka topic for logs")
 		metricsTopic   = flag.String("metrics-topic", env("DRISHTI_METRICS_TOPIC", "otlp.metrics"), "Kafka topic for metrics")

@@ -2,6 +2,7 @@ package kafkasink
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/dhanush-cn/drishti/internal/ingest"
+	"github.com/dhanush-cn/drishti/internal/partitioning"
 )
 
 // kfake is franz-go's in-memory Kafka: it speaks the real wire protocol,
@@ -167,5 +169,49 @@ func TestPublish_UnreachableKafkaReturnsAtDeadline(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("publish ignored its deadline")
+	}
+}
+
+// The sink must route every key exactly where partitioning.ForKey predicts,
+// because the load generator's partition accounting (docs/loadgen.md §7)
+// relies on that prediction. Swapping the sink's partitioner for anything
+// else (e.g. a Sarama-compatible hasher) fails here.
+func TestPublish_PartitionsMatchSharedPartitioner(t *testing.T) {
+	brokers := cluster(t, "otlp.logs", "otlp.metrics")
+	s := newSink(t, brokers)
+
+	var msgs []ingest.Message
+	for i := 0; i < 30; i++ {
+		msgs = append(msgs, ingest.Message{Key: []byte(fmt.Sprintf("svc-%d", i)), Value: []byte("v")})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.Publish(ctx, ingest.Logs, msgs); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	consumer, err := kgo.NewClient(kgo.SeedBrokers(brokers...), kgo.ConsumeTopics("otlp.logs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer consumer.Close()
+
+	p := partitioning.New()
+	seen := 0
+	for seen < len(msgs) {
+		f := consumer.PollFetches(ctx)
+		if ctx.Err() != nil {
+			t.Fatalf("timed out after %d of %d records", seen, len(msgs))
+		}
+		f.EachRecord(func(r *kgo.Record) {
+			seen++
+			want, err := partitioning.ForKey(p, "otlp.logs", r.Key, 6)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if int(r.Partition) != want {
+				t.Errorf("key %q on partition %d, shared partitioner predicts %d", r.Key, r.Partition, want)
+			}
+		})
 	}
 }
