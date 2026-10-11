@@ -1,0 +1,26 @@
+# Demo runs only: attach the receiver to the OTel Demo's network so the
+# demo collector can reach it as drishti-receiver:4317.
+#
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.demo.yml
+#   docker compose up -d          # start ~/otel-demo FIRST: this network is external
+#   unset COMPOSE_FILE            # before any benchmark (scripts/bench.sh refuses otherwise)
+#
+# Benchmarks use docker-compose.yml alone, so the demo can stay stopped
+# (its `make stop` deletes this network). Every compose command in a demo
+# session needs the same file pair, which COMPOSE_FILE provides; a plain
+# `docker compose up` without it recreates the receiver off this network.
+#
+# Service-level network maps merge across files: the base declares
+# default explicitly, this file adds otel-demo on top. Verify with
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml config
+services:
+  receiver:
+    networks:
+      otel-demo:
+        aliases:
+          - drishti-receiver
+
+networks:
+  otel-demo:
+    external: true
+    name: opentelemetry-demo

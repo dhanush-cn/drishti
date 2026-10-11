@@ -12,6 +12,19 @@
 - Idle footprint: ~1.1 GB across 20 containers
 - Idle telemetry rate: ~100 events/sec (realism, not throughput; volume comes from the synthetic generator)
 
+## Wiring the demo to Drishti
+
+- After cloning, copy `deploy/otel-demo/otelcol-config-extras.yml` (tracked in this repo) to
+  `~/otel-demo/src/otel-collector/`, then `docker restart otel-collector`.
+- The receiver joins the demo's network only through the override file `docker-compose.demo.yml`.
+  The network is external (the demo creates it, and its `make stop` deletes it), so order matters
+  **for demo runs only**:
+  1. `cd ~/otel-demo && make start-minimal-no-o11y`
+  2. `cd ~/drishti && export COMPOSE_FILE=docker-compose.yml:docker-compose.demo.yml`
+  3. `docker compose up -d` (every compose command in this shell now uses both files)
+- Benchmarks: `unset COMPOSE_FILE`, stop the demo, then `docker compose up -d` from the base file
+  alone. The receiver is then on Drishti's default network only, and needs no demo.
+
 ## Before every eval run
 
 1. `git -C ~/otel-demo diff src/flagd/demo.flagd.json` must be empty (all flags off)
