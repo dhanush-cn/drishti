@@ -1,7 +1,31 @@
 services:
+  loadgen:
+    # Benchmark-only: the profile keeps it out of a plain `docker compose up`.
+    # Build with scripts/build-loadgen.sh so run.json records the commit.
+    profiles: ["bench"]
+    image: drishti-loadgen:dev
+    build:
+      context: .
+      target: loadgen
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_DIRTY: ${GIT_DIRTY:-unknown}
+    # Container-to-container, like the collector (docs/loadgen.md §8): no
+    # Docker Desktop port-forwarding hop between generator and receiver.
+    command: ["-target", "receiver:4317"]
+    # Runs as your WSL user so results in ./bench/runs are yours, not root's.
+    user: "${DRISHTI_UID:-1000}:${DRISHTI_GID:-1000}"
+    volumes:
+      - ./bench/runs:/runs
+    depends_on:
+      - receiver
+    networks:
+      default: {}
   receiver:
     image: drishti-receiver:dev
-    build: .
+    build:
+      context: .
+      target: receiver
     depends_on:
       - kafka
     environment:
