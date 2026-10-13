@@ -1,0 +1,13 @@
+exporters:
+  otlp_grpc/drishti:
+    endpoint: drishti-receiver:4317
+    tls:
+      insecure: true
+    timeout: 5s
+
+service:
+  pipelines:
+    metrics:
+      exporters: [debug, otlp_grpc/drishti]
+    logs:
+      exporters: [debug, otlp_grpc/drishti]
