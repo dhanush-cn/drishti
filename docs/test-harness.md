@@ -24,12 +24,30 @@
   3. `docker compose up -d` (every compose command in this shell now uses both files)
 - Benchmarks: `unset COMPOSE_FILE`, stop the demo, then `docker compose up -d` from the base file
   alone. The receiver is then on Drishti's default network only, and needs no demo.
+- **Edit the collector config files in place only.** The collector bind-mounts single files
+  (e.g. `otelcol-config-extras.yml`). Tools that *replace* a file instead of rewriting it
+  (`sed -i`, `mv`, some editors' "safe write") give the path a new inode, the mount source
+  dangles, and `docker restart otel-collector` fails with `error mounting ... no such file or
+  directory`. Write with `cat new > file` (or nano, which writes in place). If it already
+  broke: `docker rm -f otel-collector && make start-minimal-no-o11y` recreates it. (13 Oct)
+- **The collector samples its own log output** (default: first 10 of each message per 10s,
+  then 1 in 100), so `debug` exporter lines are not a complete record of batches. Measurements
+  that count them need `service.telemetry.logs.sampling.enabled: false`
+  (`docs/loadgen.md` §13). (13 Oct)
 
 ## Before every eval run
 
 1. `git -C ~/otel-demo diff src/flagd/demo.flagd.json` must be empty (all flags off)
 2. flagd-ui scheduler must be stopped (it starts stopped: `running: false` in `init`)
 3. After each scenario: `git -C ~/otel-demo checkout src/flagd/demo.flagd.json`
+
+## Baseline noise (no flags on)
+
+Measured 13 Oct, Locust at 5 users, `minimal-no-o11y`: about 9% of Locust requests fail with
+no flag on. Nearly all are `POST /prompt` (58 of 58 failed, `Name or service not known`): the
+agentic AI endpoint, whose service is not part of minimal mode. A few `connection refused`
+errors appear while services start. The detector's baseline must treat these as normal, and an
+eval must not attribute them to a scenario.
 
 ## Scenarios (13 in scope)
 
