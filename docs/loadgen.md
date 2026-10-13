@@ -77,7 +77,9 @@ Design record for the synthetic OTLP load generator, decided 11 Oct 2026. It fol
 
 **Pool:** at startup, pre-generate **K** distinct requests (`-pool`, default 256) and send them in rotation. Repeating one payload would distort results in two ways: lz4 and gzip compress identical bytes unrealistically well, inflating bytes/sec, and a single key puts everything on one partition.
 
-**Services:** each request carries resources from **S** services (`-services`, default 20), so keys spread across partitions. `-services 1` reproduces the hot partition on purpose, which makes the Week 3 comparison a two-flag experiment. Twenty keys don't spread evenly over 6 partitions, so the actual spread is always reported (§7).
+**Services:** the run uses **S** distinct service keys (`-services`, default 20), so keys spread across partitions. `-services 1` reproduces the hot partition on purpose, which makes the Week 3 comparison a two-flag experiment. Twenty keys don't spread evenly over 6 partitions, so the actual spread is always reported (§7).
+
+**Resources per request** (`-resources-per-request`, default **1**, decided 13 Oct from §13's observation): each request carries one service's resource, and services rotate across consecutive requests, which is what the collector actually sends. The pool is rounded up so every key is equally frequent (256 → 260 for 20 services; otherwise some keys are sent 13 times per rotation and others 12). `-resources-per-request 20` reproduces the Pass 1 shape (one request = 20 small Kafka messages) and stays a sweep point. `run.json` records both the requested and effective value, so runs at different settings are never mixed silently.
 
 **Log shape:** templated bodies with variable tokens, body length drawn from `-body-min`..`-body-max` (default about 80–400 B), a mix of severities, and `-attrs` attributes (default about 5–8). Templates are used rather than random bytes because real logs compress the way templated text does, not the way noise does, and the Week 4 Drain detector needs templated input.
 
@@ -250,6 +252,6 @@ SDK override check: no `OTEL_BLRP_*` in `.env*` or `compose*.yaml`, and no batch
 - **Metrics: two populations.** About half the batches are SDK pushes (1 resource, tens of points). The rest are scraper batches (≈24–53 resources, ≈436 points; docker_stats/host_metrics-style). The metrics default should model both and is set when metrics are added to the generator, from this table.
 - **Scale:** the 100k records/s Pass 1 runs are about 2,000× the demo's log rate at 5 Locust users. The demo is for realism and labelled incidents; volume comes from the generator, as `docs/test-harness.md` says.
 
-**Open decision: resources per request.** Add `-resources-per-request` (default 1, services rotating across requests) so the default request shape matches the observed collector traffic. Keep 20 as a sweep point. This changes Kafka message size (one ~246 KB message per request vs twenty ~12 KB ones), so Pass 1 results at `-services 20` are not comparable with runs after the change. Each `run.json` already records `resources_per_request`, so the two never get mixed silently.
+**Decided (13 Oct): resources per request defaults to 1** (§6), services rotating across requests, so the default request shape matches observed collector traffic. 20 stays a sweep point. This changes Kafka message size (one ~246 KB message per request vs twenty ~12 KB ones), so the first Pass 1 runs (20 resources per request) are not comparable with runs after the change; `run.json` records the value.
 
 **Week 3:** batch size becomes a sweep parameter (e.g. 64 / 512 / 2048), so the default needs a defensible source, not a perfect one.

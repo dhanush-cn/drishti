@@ -21,7 +21,13 @@ const RunIDAttr = "drishti.loadgen.run_id"
 // different claims.
 type LogShape struct {
 	BatchSize int `json:"batch_size"` // log records per request
-	Services  int `json:"services"`   // distinct service.name keys; resources per request = min(Services, BatchSize)
+	Services  int `json:"services"`   // distinct service.name keys across the run
+	// Resources is the requested resources (services) per request. Default 1:
+	// observed collector traffic carries exactly one resource per request
+	// (docs/loadgen.md §13), because without a batch processor the collector
+	// forwards each SDK export, and an SDK export is one service. 20 is kept
+	// as a sweep point. The effective value is ResourcesPerRequest().
+	Resources int `json:"resources_per_request_requested"`
 	BodyMin   int `json:"body_min_bytes"`
 	BodyMax   int `json:"body_max_bytes"` // body length range, inclusive
 	AttrsMin  int `json:"attrs_min"`
@@ -34,6 +40,8 @@ func (s LogShape) Validate() error {
 		return fmt.Errorf("batch size must be >= 1")
 	case s.Services < 1:
 		return fmt.Errorf("services must be >= 1")
+	case s.Resources < 1:
+		return fmt.Errorf("resources per request must be >= 1")
 	case s.BodyMin < 1 || s.BodyMax < s.BodyMin:
 		return fmt.Errorf("body range %d..%d invalid", s.BodyMin, s.BodyMax)
 	case s.AttrsMin < 0 || s.AttrsMax < s.AttrsMin || s.AttrsMax > len(attrKeys):
@@ -42,13 +50,30 @@ func (s LogShape) Validate() error {
 	return nil
 }
 
-// ResourcesPerRequest is min(Services, BatchSize): a resource never carries
-// zero records.
+// ResourcesPerRequest is min(Resources, Services, BatchSize): a request never
+// repeats a service, and a resource never carries zero records.
 func (s LogShape) ResourcesPerRequest() int {
-	if s.Services < s.BatchSize {
-		return s.Services
+	n := s.Resources
+	if s.Services < n {
+		n = s.Services
 	}
-	return s.BatchSize
+	if s.BatchSize < n {
+		n = s.BatchSize
+	}
+	return n
+}
+
+// PoolSizeFor rounds k up so that every service appears equally often across
+// the pool (pool slots = k x resources per request must divide evenly by
+// Services). Otherwise, with 1 resource per request, 256 requests over 20
+// services would send some keys 13 times per rotation and others 12: an 8%
+// skew built into the generator rather than measured.
+func (s LogShape) PoolSizeFor(k int) int {
+	nres := s.ResourcesPerRequest()
+	for (k*nres)%s.Services != 0 {
+		k++
+	}
+	return k
 }
 
 // ServiceName is the key a resource is produced under. How these keys spread
@@ -172,8 +197,10 @@ func (g gen) severity() (logsv1.SeverityNumber, string) {
 // that is fine for the receiver-only benchmark (§6, deferred restamping §12).
 //
 // Request j carries ResourcesPerRequest() resources. Their services rotate
-// with j, so across the pool every service appears equally often, and the
-// records of one request are split as evenly as possible between them.
+// with j, so across the pool every service appears equally often (k is
+// rounded up by PoolSizeFor), and the records of one request are split as
+// evenly as possible between them. The returned pool's length is the
+// effective pool size.
 func LogPool(shape LogShape, k int, runID string, seed uint64) ([]*collogs.ExportLogsServiceRequest, error) {
 	if err := shape.Validate(); err != nil {
 		return nil, err
@@ -181,6 +208,7 @@ func LogPool(shape LogShape, k int, runID string, seed uint64) ([]*collogs.Expor
 	if k < 1 {
 		return nil, fmt.Errorf("pool size must be >= 1")
 	}
+	k = shape.PoolSizeFor(k)
 	g := gen{r: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))}
 	ts := uint64(time.Now().UnixNano())
 	nres := shape.ResourcesPerRequest()

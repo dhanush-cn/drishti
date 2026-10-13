@@ -15,7 +15,7 @@ import (
 
 func testPool(t *testing.T, batch int) []*collogs.ExportLogsServiceRequest {
 	t.Helper()
-	p, err := LogPool(LogShape{BatchSize: batch, Services: 4, BodyMin: 40, BodyMax: 80, AttrsMin: 1, AttrsMax: 3}, 8, "test", 1)
+	p, err := LogPool(LogShape{BatchSize: batch, Services: 4, Resources: 1, BodyMin: 40, BodyMax: 80, AttrsMin: 1, AttrsMax: 3}, 8, "test", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

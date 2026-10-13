@@ -49,7 +49,8 @@ func main() {
 		timeout  = flag.Duration("timeout", 5*time.Second, "client deadline per RPC; collector's OTLP exporter default")
 		inflight = flag.Int("inflight", 256, "max concurrent RPCs; beyond it a request is counted saturated and fails the run")
 		batch    = flag.Int("batch", 512, "log records per request (provisional: OTel Logs SDK maxExportBatchSize default, §13)")
-		services = flag.Int("services", 20, "distinct service.name keys; -services 1 reproduces the hot partition")
+		services = flag.Int("services", 20, "distinct service.name keys across the run; -services 1 reproduces the hot partition")
+		perReq   = flag.Int("resources-per-request", 1, "resources (services) per request; 1 matches observed collector traffic (§13), 20 is the Pass 1 shape")
 		poolSize = flag.Int("pool", 256, "distinct pre-generated requests sent in rotation")
 		bodyMin  = flag.Int("body-min", 80, "min log body bytes")
 		bodyMax  = flag.Int("body-max", 400, "max log body bytes")
@@ -76,7 +77,7 @@ func main() {
 	}
 
 	runID := newRunID()
-	shape := loadgen.LogShape{BatchSize: *batch, Services: *services, BodyMin: *bodyMin, BodyMax: *bodyMax, AttrsMin: *attrsMin, AttrsMax: *attrsMax}
+	shape := loadgen.LogShape{BatchSize: *batch, Services: *services, Resources: *perReq, BodyMin: *bodyMin, BodyMax: *bodyMax, AttrsMin: *attrsMin, AttrsMax: *attrsMax}
 	pool, err := loadgen.LogPool(shape, *poolSize, runID, *seed)
 	if err != nil {
 		fail("payload: %v", err)
@@ -141,7 +142,7 @@ func main() {
 		Shape: loadgen.ShapeReport{
 			LogShape:            shape,
 			ResourcesPerRequest: shape.ResourcesPerRequest(),
-			PoolSize:            *poolSize,
+			PoolSize:            len(pool), // effective: rounded up so every service is equally frequent
 			Compression:         compression,
 			Conns:               *conns,
 			BatchSizeSource:     "provisional: OTel Logs SDK BatchLogRecordProcessor maxExportBatchSize default (512)",

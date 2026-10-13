@@ -7,7 +7,7 @@ import (
 )
 
 func TestLogPool_ShapeIsExactAndVaried(t *testing.T) {
-	shape := LogShape{BatchSize: 512, Services: 20, BodyMin: 80, BodyMax: 400, AttrsMin: 5, AttrsMax: 8}
+	shape := LogShape{BatchSize: 512, Services: 20, Resources: 20, BodyMin: 80, BodyMax: 400, AttrsMin: 5, AttrsMax: 8}
 	pool, err := LogPool(shape, 64, "run-x", 7)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestLogPool_ShapeIsExactAndVaried(t *testing.T) {
 }
 
 func TestLogPool_HotPartitionMode(t *testing.T) {
-	pool, err := LogPool(LogShape{BatchSize: 100, Services: 1, BodyMin: 80, BodyMax: 80, AttrsMin: 0, AttrsMax: 0}, 4, "r", 1)
+	pool, err := LogPool(LogShape{BatchSize: 100, Services: 1, Resources: 1, BodyMin: 80, BodyMax: 80, AttrsMin: 0, AttrsMax: 0}, 4, "r", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestLogPool_HotPartitionMode(t *testing.T) {
 }
 
 func TestLogPool_SameSeedIsReproducible(t *testing.T) {
-	shape := LogShape{BatchSize: 20, Services: 3, BodyMin: 80, BodyMax: 120, AttrsMin: 1, AttrsMax: 3}
+	shape := LogShape{BatchSize: 20, Services: 3, Resources: 3, BodyMin: 80, BodyMax: 120, AttrsMin: 1, AttrsMax: 3}
 	a, _ := LogPool(shape, 4, "r", 42)
 	b, _ := LogPool(shape, 4, "r", 42)
 	for i := range a {
@@ -95,14 +95,50 @@ func TestLogPool_SameSeedIsReproducible(t *testing.T) {
 
 func TestLogShape_Validate(t *testing.T) {
 	bad := []LogShape{
-		{BatchSize: 0, Services: 1, BodyMin: 1, BodyMax: 1},
-		{BatchSize: 1, Services: 0, BodyMin: 1, BodyMax: 1},
-		{BatchSize: 1, Services: 1, BodyMin: 10, BodyMax: 5},
-		{BatchSize: 1, Services: 1, BodyMin: 1, BodyMax: 1, AttrsMin: 0, AttrsMax: 99},
+		{BatchSize: 0, Services: 1, Resources: 1, BodyMin: 1, BodyMax: 1},
+		{BatchSize: 1, Services: 0, Resources: 1, BodyMin: 1, BodyMax: 1},
+		{BatchSize: 1, Services: 1, Resources: 1, BodyMin: 10, BodyMax: 5},
+		{BatchSize: 1, Services: 1, Resources: 1, BodyMin: 1, BodyMax: 1, AttrsMin: 0, AttrsMax: 99},
+		{BatchSize: 1, Services: 1, Resources: 0, BodyMin: 1, BodyMax: 1},
 	}
 	for i, s := range bad {
 		if s.Validate() == nil {
 			t.Errorf("shape %d should be invalid: %+v", i, s)
 		}
+	}
+}
+
+// The default shape (docs/loadgen.md §13): one resource per request, as the
+// collector actually sends, with services rotating across requests. The pool
+// is rounded up so every key is equally frequent: 256 requests over 20
+// services would otherwise skew some keys 13:12 per rotation.
+func TestLogPool_OneResourcePerRequestRotatesEvenly(t *testing.T) {
+	shape := LogShape{BatchSize: 512, Services: 20, Resources: 1, BodyMin: 80, BodyMax: 400, AttrsMin: 5, AttrsMax: 8}
+	pool, err := LogPool(shape, 256, "r", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pool) != 260 {
+		t.Fatalf("pool size %d, want 256 rounded up to 260 (multiple of 20 services)", len(pool))
+	}
+	per := map[string]int{}
+	for j, req := range pool {
+		if len(req.ResourceLogs) != 1 || CountLogRecords(req) != 512 {
+			t.Fatalf("request %d: %d resources, %d records; want 1 and 512", j, len(req.ResourceLogs), CountLogRecords(req))
+		}
+		per[req.ResourceLogs[0].Resource.Attributes[0].Value.GetStringValue()]++
+	}
+	if len(per) != 20 {
+		t.Fatalf("%d distinct services, want 20", len(per))
+	}
+	for s, n := range per {
+		if n != 13 {
+			t.Fatalf("service %s appears %d times, want 13 (260/20)", s, n)
+		}
+	}
+	// Consecutive requests use different keys, so partitions are not hit in
+	// long runs of one key.
+	if a, b := pool[0].ResourceLogs[0].Resource.Attributes[0].Value.GetStringValue(), pool[1].ResourceLogs[0].Resource.Attributes[0].Value.GetStringValue(); a == b {
+		t.Fatalf("requests 0 and 1 share service %s", a)
 	}
 }
