@@ -230,4 +230,26 @@ The first catches env-var overrides; the second catches batch sizes set in code 
 
 **Expected outcome:** at the demo's rate, pipeline batches are well under 512 because they are flushed by time, not size. The observed shape is quoted as context, not used as the default.
 
+### Observed (13 Oct 2026)
+
+Demo 3.1.0 `minimal-no-o11y`, Locust 5 users, 300 s window, collector logger sampling **off**. A first run with sampling on showed exactly 300 `Logs` lines (10 per 10 s tick) against 2,366 Kafka messages and was discarded; see `docs/test-harness.md`.
+
+| | Logs | Metrics |
+|---|---|---|
+| Batches in 300 s | 2,414 (8.0/s) | 238 (0.8/s) |
+| Records / data points per batch | median **3**, p90 15, p99 36, max **56** | median 37, p90 436, max 438 data points |
+| Resources per batch | **1 always** | median 1, p90 24, max 53 |
+| Total rate | ~49 log records/s | ~94 data points/s |
+| Loss/dup sanity (resources vs Kafka delta) | 2,414 vs 2,428 | 1,600 vs 1,560 |
+
+SDK override check: no `OTEL_BLRP_*` in `.env*` or `compose*.yaml`, and no batch size set in code. One service (`quote`, PHP) reads `OTEL_BLRP_SCHEDULE_DELAY`, which is the flush interval, not the size, and nothing sets it. So the 512 cap holds for every service, subject to each SDK's conformance.
+
+**Reading it:**
+- **Logs: confirmed time-flushed.** No batch got anywhere near 512 (max 56), so the default stays **512, provisional**, with the SDK spec as the source and the observed shape as context.
+- **Logs: one resource per request.** Every pipeline batch carried exactly one resource. Without a `batch` processor, the collector forwards each SDK export as it arrives, and an SDK export is one service. The generator's default (`-services 20`, so 20 resources in every request) does not match this. It turns one request into 20 small Kafka messages instead of one large one. **Open decision** (below).
+- **Metrics: two populations.** About half the batches are SDK pushes (1 resource, tens of points). The rest are scraper batches (≈24–53 resources, ≈436 points; docker_stats/host_metrics-style). The metrics default should model both and is set when metrics are added to the generator, from this table.
+- **Scale:** the 100k records/s Pass 1 runs are about 2,000× the demo's log rate at 5 Locust users. The demo is for realism and labelled incidents; volume comes from the generator, as `docs/test-harness.md` says.
+
+**Open decision: resources per request.** Add `-resources-per-request` (default 1, services rotating across requests) so the default request shape matches the observed collector traffic. Keep 20 as a sweep point. This changes Kafka message size (one ~246 KB message per request vs twenty ~12 KB ones), so Pass 1 results at `-services 20` are not comparable with runs after the change. Each `run.json` already records `resources_per_request`, so the two never get mixed silently.
+
 **Week 3:** batch size becomes a sweep parameter (e.g. 64 / 512 / 2048), so the default needs a defensible source, not a perfect one.
