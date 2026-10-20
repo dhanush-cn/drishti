@@ -183,6 +183,8 @@ The generator stays pure: it applies load, measures, and writes files. The wrapp
 
 **Capture:** environment for `env.json` (including power state), background `docker stats` sampling into `containers.csv`, and running the generator container N times per rate.
 
+**Built so far (Week 2): `scripts/sweep.sh` + `scripts/sweep-summary.py`**, the capture half: N repeats per rate, `docker stats` sampled during every run (`stats/<label>.csv`, ~2 s resolution, the cost of one `--no-stream` snapshot), run directories copied out, and `summary.md` with per-container CPU over the **steady window only** and the per-rate verdict above (a repeat with no `run.json` makes the rate INCOMPLETE rather than being judged on the rest). Pre-flight and `env.json` are still the driver script's job, so sweeps stay internal until `bench.sh` exists.
+
 ## 12. Deferred, with trigger
 
 Each item is built only when its trigger appears.
