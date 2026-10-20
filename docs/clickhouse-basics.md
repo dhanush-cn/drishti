@@ -46,6 +46,9 @@ FROM system.parts WHERE table = 'lab_logs' AND active;
 **Notice:** one INSERT made one or a few *parts*: immutable, sorted directories
 on disk. Background merges combine parts over time; nothing is updated in place.
 
+*Observed 13 Oct (26.8.21):* 5 parts for 5M rows (23.8 MiB), still 5 after 20 s. Merges
+are not immediate; parts of about 1M rows each are not urgent to merge.
+
 **Answer:** why is ClickHouse append-only, and what does that buy for log data?
 
 ## 2. The sort key is the index
@@ -69,6 +72,9 @@ EXPLAIN indexes = 1 SELECT count() FROM lab_logs WHERE service = 'svc-3';
 primary index holds one mark per *granule* (8192 rows by default), so whole
 granules that cannot match are skipped. The `severity` query reads everything.
 
+*Observed 13 Oct:* `service = 'svc-3'` read 81,921 rows (37 of 612 granules); `severity
+= 'ERROR'` read all 5,000,000.
+
 **Answer:** why is the primary index *sparse*, and what goes first in a sort key:
 the column you filter on most, or the one with the most distinct values?
 
@@ -84,9 +90,16 @@ FROM system.columns WHERE table LIKE 'lab_logs%' GROUP BY table;
 ```
 Re-run the `system.query_log` query from step 2 for this table.
 
-**Notice:** two things change with key order: rows read for a service filter,
-and how well columns compress. Sorted data puts similar values next to each
-other, so `(service, ts)` usually compresses better than `(ts)`.
+**Notice:** two things can change with key order: rows read for a service
+filter, and how well columns compress. Sorting puts similar values next to each
+other, which often helps compression, but it depends on the data.
+
+*Observed 13 Oct:* rows read for the service filter went from 81,921 to 5,000,000.
+Compression went the **other** way: `(ts)` was slightly smaller (23.35 vs 23.75 MiB),
+because this synthetic data cycles through services, severities and durations in
+perfectly regular order along time. (The first version of this lab claimed `(service, ts)`
+would compress better; the measurement said otherwise.) Measure compression on real
+OTLP data in Week 2 before choosing a key for it.
 
 **Answer:** Drishti's dashboards ask "service X over the last hour". Which key,
 and what would you lose for "all services, last 5 minutes"?
@@ -156,14 +169,20 @@ OPTIMIZE TABLE lab_ttl FINAL;
 SELECT count() FROM lab_ttl;
 ```
 
-**Notice:** the old rows disappear on merge. This is exactly the
-`docs/loadgen.md` §12 trigger: pooled payloads carry their generation-time
-timestamps, so once storage is in the benchmark path, a long run's records can
-land in one old partition or be expired on arrival. That's why Week 2 needs the
-per-send restamping before storage numbers mean anything.
+**Notice:** the 5-day-old rows never got in. *Observed 13 Oct:* count was 1000
+**before** the merge, not 2000. ClickHouse drops rows that are already expired when it
+writes the part on insert; merges remove rows that expire **later**. (The first version
+of this lab said TTL only applies during merges; the measurement corrected it.)
 
-**Answer:** TTL is applied during merges, not on insert. What does that imply
-for disk usage right after a burst of expired data?
+This makes the `docs/loadgen.md` §12 trigger concrete: pooled payloads carry their
+generation-time timestamps, so once storage is in the benchmark path, records older
+than the TTL are silently **dropped on arrival**, and the storage count would show
+"loss" that is really TTL. That's why Week 2 needs per-send restamping before storage
+numbers mean anything.
+
+**Answer:** rows expire on insert *and* on merge. What does that imply for disk usage
+after a burst of data that expires a day later, and for a benchmark that checks
+"records in ClickHouse = records sent"?
 
 ## 7. Why the storage consumer must batch
 
@@ -179,9 +198,17 @@ chq --query "SELECT count() FROM system.parts WHERE table='lab_logs' AND active"
 INSERT INTO lab_logs SELECT now64(3), 'svc-y', 'INFO', concat('batched ', toString(number)) FROM numbers(500);
 ```
 
-**Notice:** every INSERT creates at least one part, so 500 tiny inserts create
-hundreds of parts for merges to clean up. ClickHouse refuses inserts past a
-threshold ("Too many parts"). Sort and compression cost is per part too.
+**Notice:** every INSERT creates at least one part. Merges then have to combine them,
+and ClickHouse refuses inserts past a threshold ("Too many parts"). Sort and
+compression cost is per part too.
+
+*Observed 13 Oct:* 500 single-row inserts took **30.7 s**; one 500-row insert took
+**0.25 s** (about 120x). The part count did **not** explode (5 before, 5 after),
+because the inserts were spread over 30 s and background merges absorbed the tiny
+parts as they came. So the cost showed up as time and merge work, not as a part count.
+A faster burst of small inserts (many consumers, no batching) is what hits "Too many
+parts". To see every part that was created, query `system.part_log`
+(`event_type = 'NewPart'`) instead of the current part count.
 
 **Answer:** this is the core Week 2 trade-off: large batches keep ClickHouse
 healthy but delay queryability. How do Drishti's batch size and flush interval
@@ -219,6 +246,9 @@ INSERT INTO lab_blockdedup SETTINGS insert_deduplication_token = 'batch-42' SELE
 SELECT count() FROM lab_blockdedup;     -- 10
 ```
 
+*Observed 13 Oct:* ReplacingMergeTree: 1500 rows before merge, 1000 with `FINAL`, 1000
+after `OPTIMIZE`. Retried batch with the same token: 10 rows, not 20.
+
 **Notice:** two mechanisms. ReplacingMergeTree deduplicates *eventually* (on
 merge, or at read time with `FINAL`, which costs CPU), keyed by the sort key.
 An insert deduplication token rejects a *whole retried batch*, as long as the
@@ -238,6 +268,9 @@ DROP TABLE IF EXISTS lab_blockdedup;
 ```
 
 ## What to carry into the Week 2 table design
+
+Lab run on 13 Oct: `scripts/clickhouse-lab.sh` runs every exercise and saves the
+output; zero statements errored on 26.8.21.
 
 Write one line per decision, with the measured numbers from this lab:
 sort key, partition key, LowCardinality columns, codecs, TTL, batch size and
