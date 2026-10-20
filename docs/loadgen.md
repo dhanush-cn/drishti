@@ -95,7 +95,7 @@ Design record for the synthetic OTLP load generator, decided 11 Oct 2026. It fol
 
 **Compression:** `-gzip` defaults to **on**, matching the collector's OTLP exporter. Decompression is real work the receiver does in production, so a benchmark without it overstates throughput. The compression setting is reported with every number.
 
-**Timestamps:** pool payloads carry the timestamp from when they were generated. The receiver doesn't read them, so stale timestamps are acceptable for v1. They stop being acceptable once storage is in the path (§12).
+**Timestamps:** pool payloads carry the timestamp from when they were generated. With `-stamp` (default on since Week 2) every send is a shallow copy with record timestamps set to the send time and the resource tagged `drishti.loadgen.seq` (§12, built). `-stamp=false` sends pool requests as built, as in Week 1; receiver-only sweeps use it so their numbers stay comparable with Week 1's.
 
 ## 7. Partition accounting
 
@@ -189,9 +189,9 @@ Each item is built only when its trigger appears.
 
 | Item | What it is | Trigger to build it |
 |---|---|---|
-| **Per-send patching** | Rewrite fields in each pooled payload at send time | Week 2, when ClickHouse is in the benchmark path. One mechanism covers the next two rows |
-| ↳ Timestamp restamping | Shift timestamps to near-now per send | Stale timestamps land in one old time partition or get expired by TTL on arrival, which distorts storage numbers |
-| ↳ Per-record identity | `drishti.loadgen.seq` (request index) plus positions, giving `(run_id, seq, resource_idx, record_idx)`. `resource_idx` is needed because one request carries resources from S services | End-to-end zero-loss/zero-dup checks. Counting per `run_id` can't tell one loss plus one duplicate from a clean run. Check distinct identities against the expected count once the storage consumer is idempotent |
+| **Per-send patching** (**built, Week 2**, `internal/loadgen/stamp.go`) | Shallow copy of each pooled payload at send time; the pool is never mutated (concurrent sends share it) | Week 2, when ClickHouse is in the benchmark path |
+| ↳ Timestamp restamping (built) | Record timestamps = send time | Stale timestamps land in one old time partition or get expired by TTL on arrival, which distorts storage numbers |
+| ↳ Per-send identity (built) | `drishti.loadgen.seq` (send counter, int) on every resource. With 1 resource/request, `(run_id, seq)` is one Kafka message. Positions (`resource_idx`, `record_idx`) are **not** stamped: the check is records per `(run_id, seq)` against records per request, which catches loss (missing seq, short count) and duplicates (long count) as long as a duplicate is a whole message, which is what Kafka at-least-once produces | End-to-end zero-loss/zero-dup checks. Counting per `run_id` can't tell one loss plus one duplicate from a clean run |
 | **Pass-through codec** | Pre-marshal each pooled request to `[]byte` once and send it with `grpc.ForceCodecV2`, so generator marshal cost is near zero | The generator profile shows proto marshaling, **or** schedule lag grows at high rates while the receiver is healthy |
 | ↳ Pre-compressed payloads | Pre-gzip bytes once. The generator registers its own compressor under the name `"gzip"` (identity on compress) so the header still says gzip and the receiver decompresses normally. This overrides the standard gzip compressor **process-wide**: acceptable in a dedicated generator binary, and must be documented | The profile shows gzip compression cost in the generator |
 | **Receiver shape histograms** | Records-per-request and resources-per-request histograms in the receiver, per signal | Week 3 bottleneck analysis needs per-request shape under load. Not built for Week 1, because every commit before loadgen code delays the first number |

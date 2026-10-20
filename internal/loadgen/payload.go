@@ -194,7 +194,7 @@ func (g gen) severity() (logsv1.SeverityNumber, string) {
 // LogPool pre-generates k distinct requests (§6). Sending them in rotation
 // costs nothing per send, while still giving compressors and the
 // partitioner realistic variety. Timestamps are fixed at generation time;
-// that is fine for the receiver-only benchmark (§6, deferred restamping §12).
+// Stamp (stamp.go) moves them to send time per send when -stamp is on.
 //
 // Request j carries ResourcesPerRequest() resources. Their services rotate
 // with j, so across the pool every service appears equally often (k is

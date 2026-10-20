@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -64,6 +65,7 @@ func main() {
 		tol      = flag.Float64("tolerance", 0.01, "achieved >= offered*(1-tolerance) (§13: provisional)")
 		maxLag   = flag.Duration("max-lag", 50*time.Millisecond, "max schedule lag (§13: provisional)")
 		p99      = flag.Duration("p99", time.Second, "p99 bound for PASS (§13: provisional)")
+		stamp    = flag.Bool("stamp", true, "per send: set record timestamps to send time and tag resources with drishti.loadgen.seq (§12); -stamp=false sends pool requests as built (Week 1 behaviour)")
 		cpuProf  = flag.Bool("cpuprofile", false, "write the generator's own CPU profile (warm-up + steady + drain) to cpu.pprof in the run directory")
 	)
 	flag.Parse()
@@ -106,7 +108,13 @@ func main() {
 		callOpts = append(callOpts, grpc.UseCompressor(gzip.Name))
 		compression = "gzip"
 	}
+	var seq atomic.Uint64
 	export := func(ctx context.Context, req *collogs.ExportLogsServiceRequest) (int64, error) {
+		if *stamp {
+			// Send time, not due time: event time should be when the
+			// "application" emitted the record, which is now.
+			req = loadgen.Stamp(req, uint64(time.Now().UnixNano()), seq.Add(1))
+		}
 		resp, err := client.Export(ctx, req, callOpts...)
 		if err != nil {
 			return 0, err
