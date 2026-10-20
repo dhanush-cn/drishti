@@ -21,6 +21,35 @@ services:
       - receiver
     networks:
       default: {}
+  storage:
+    image: drishti-storage:dev
+    build:
+      context: .
+      target: storage
+    # Healthy, not just started: the consumer checks the table at startup
+    # and exits if ClickHouse is not answering yet.
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      DRISHTI_KAFKA_BROKERS: "kafka:29092"
+      DRISHTI_CLICKHOUSE_URL: "http://clickhouse:8123"
+      # A new group starts at the END of otlp.logs on this laptop: Kafka
+      # holds up to 24 h of receiver-only benchmark traffic with stale
+      # timestamps. Production would start at earliest (the flag default).
+      # Only matters while the group has no committed offset.
+      DRISHTI_STORAGE_RESET: "latest"
+      GOMEMLIMIT: "600MiB"
+      DRISHTI_PPROF_ADDR: ":6060"
+    ports:
+      - "127.0.0.1:16061:6060"
+    # Six partitions x up to 32 MiB batch + one decoded message each, plus
+    # in-flight HTTP bodies: ~200-400 MiB at full batches.
+    mem_limit: 768m
+    networks:
+      default: {}
   receiver:
     image: drishti-receiver:dev
     build:
