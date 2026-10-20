@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"syscall"
 	"time"
 
@@ -63,6 +64,7 @@ func main() {
 		tol      = flag.Float64("tolerance", 0.01, "achieved >= offered*(1-tolerance) (§13: provisional)")
 		maxLag   = flag.Duration("max-lag", 50*time.Millisecond, "max schedule lag (§13: provisional)")
 		p99      = flag.Duration("p99", time.Second, "p99 bound for PASS (§13: provisional)")
+		cpuProf  = flag.Bool("cpuprofile", false, "write the generator's own CPU profile (warm-up + steady + drain) to cpu.pprof in the run directory")
 	)
 	flag.Parse()
 
@@ -118,7 +120,24 @@ func main() {
 
 	fmt.Printf("run %s: %.0f records/s = %.1f req/s x %d records, %s warm-up + %s steady -> %s\n",
 		runID, *rate, *rate/float64(*batch), *batch, *warmup, *duration, *target)
+	// Profile only the run itself, not pool generation: the question is
+	// what each send costs (gzip, marshal, gRPC), §12 pass-through codec.
+	var profPath string
+	if *cpuProf {
+		profPath = filepath.Join(*outDir, runID+".cpu.pprof")
+		f, err := os.Create(profPath)
+		if err != nil {
+			fail("cpuprofile: %v", err)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			fail("cpuprofile: %v", err)
+		}
+		defer f.Close()
+	}
 	res, runErr := loadgen.Run(ctx, loadgen.RealClock, cfg, pool, export)
+	if *cpuProf {
+		pprof.StopCPUProfile()
+	}
 	if res == nil {
 		fail("run: %v", runErr)
 	}
@@ -162,6 +181,11 @@ func main() {
 	dir := filepath.Join(*outDir, loadgen.DirName(res.Start, runID))
 	if err := loadgen.Write(dir, rep); err != nil {
 		fail("write results: %v", err)
+	}
+	if profPath != "" {
+		if err := os.Rename(profPath, filepath.Join(dir, "cpu.pprof")); err != nil {
+			fail("move cpu profile: %v", err)
+		}
 	}
 
 	v := "PASS"

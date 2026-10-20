@@ -20,6 +20,7 @@ import (
 	"github.com/dhanush-cn/drishti/internal/ingest"
 	"github.com/dhanush-cn/drishti/internal/kafkasink"
 	"github.com/dhanush-cn/drishti/internal/otlpgrpc"
+	"github.com/dhanush-cn/drishti/internal/pprofsrv"
 )
 
 func main() {
@@ -34,6 +35,7 @@ func main() {
 		linger         = flag.Duration("linger", envDur("DRISHTI_LINGER", 5*time.Millisecond), "producer linger")
 		deliveryTO     = flag.Duration("delivery-timeout", envDur("DRISHTI_DELIVERY_TIMEOUT", 30*time.Second), "give up on an undelivered record after this long (its export already failed and the sender is retrying)")
 		bufBytes       = flag.Int("max-buffered-bytes", envInt("DRISHTI_MAX_BUFFERED_BYTES", 64<<20), "producer memory bound before Produce blocks")
+		pprofAddr      = flag.String("pprof-addr", env("DRISHTI_PPROF_ADDR", ""), "serve /debug/pprof/ on this address (e.g. :6060); empty = off")
 	)
 	flag.Parse()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -58,6 +60,16 @@ func main() {
 	if err != nil {
 		log.Error("startup topic check failed", "err", err)
 		os.Exit(1)
+	}
+
+	if *pprofAddr != "" {
+		ps, err := pprofsrv.Start(*pprofAddr)
+		if err != nil {
+			log.Error("pprof listen", "addr", *pprofAddr, "err", err)
+			os.Exit(1)
+		}
+		defer ps.Close(context.Background())
+		log.Info("pprof listening", "addr", ps.Addr())
 	}
 
 	ing := ingest.New(sink, ingest.Config{MaxMessageBytes: *maxMsg, PublishTimeout: *publishTimeout})

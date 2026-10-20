@@ -32,8 +32,13 @@ services:
       DRISHTI_LISTEN: ":4317"
       DRISHTI_KAFKA_BROKERS: "kafka:29092"
       GOMEMLIMIT: "400MiB"
+      # Profiling endpoint (internal/pprofsrv). Idle cost is nil; a CPU
+      # profile samples only while one is being fetched.
+      DRISHTI_PPROF_ADDR: ":6060"
     ports:
       - "14317:4317"
+      # Loopback only: profiles expose internals, so not on the LAN.
+      - "127.0.0.1:16060:6060"
     # Explicit on purpose. A service that declares networks: is attached
     # ONLY to the ones it lists, so without this line, merging
     # docker-compose.demo.yml (which adds the demo network) would drop

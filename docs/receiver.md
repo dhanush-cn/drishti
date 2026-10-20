@@ -76,6 +76,23 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --property print.key=true --property print.partition=true --max-messages 3 | cut -c1-80
 ```
 
+## Profiling (pprof)
+
+`-pprof-addr` / `DRISHTI_PPROF_ADDR` serves `/debug/pprof/` on its own listener (`internal/pprofsrv`). Off by default; compose sets `:6060` and publishes it on `127.0.0.1:16060` only.
+
+- **Own listener, own mux.** The OTLP port is the data path and shares nothing with debugging. `net/http/pprof`'s `init` registers its handlers on `http.DefaultServeMux` regardless (a test asserting otherwise failed), so the rule is that the receiver never serves `DefaultServeMux`.
+- **Cost.** Idle: nothing. A CPU profile samples at 100 Hz only while `profile?seconds=N` is being fetched. Heap/allocs read counters the runtime already keeps. Block and mutex profiling stay off (they have a standing cost).
+- **Write timeout 120 s**, above the longest profile we request (30 s); a shorter timeout cuts the response mid-profile.
+- **Symbols survive `-ldflags="-s -w"`**: profiles are symbolized from the runtime's own tables, not DWARF, so `go tool pprof` on the WSL side needs no binary.
+
+```bash
+curl -s -o cpu.pprof 'http://127.0.0.1:16060/debug/pprof/profile?seconds=30'   # during a load run
+go tool pprof -top -nodecount=40 cpu.pprof
+go tool pprof -top -cum -nodecount=40 cpu.pprof
+```
+
+The load generator profiles itself with `-cpuprofile` (warm-up + steady + drain, not pool generation) into `cpu.pprof` in its run directory.
+
 ## Revert-proofs (break → red → revert → green)
 
 | Mechanism | Break it | Expected failure |
@@ -88,6 +105,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 | Key → partition | in `kafkasink.Publish`, set `Key: nil` | `TestPublish_RoundTripKeysHeadersAndPartitioning` (keys not preserved) |
 | Explicit partitioner | in `partitioning.New()`, return `kgo.StickyKeyPartitioner(kgo.SaramaHasher(fnv32a))` (an FNV-1a `func([]byte) uint32`) | `TestForKey_ObservedPairs`, `TestNew_MatchesLibraryDefault`, `TestPublish_PartitionsMatchSharedPartitioner` |
 | Fail-fast topics | start the receiver before `create-topics.sh` | exits with `topic "otlp.logs" missing` |
+| pprof format | in `pprofsrv.Handler`, map `/debug/pprof/profile` to `pprof.Index` | `TestStart_ServesCPUProfile` (`404 Unknown profile`, verified) |
 | Real backpressure | receiver + smoke running, `docker compose stop kafka`, run smoke again | smoke prints `Unavailable` after ~4s, receiver stays up; `start kafka` → smoke OK again |
 
 ## Next
