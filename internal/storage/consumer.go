@@ -66,6 +66,12 @@ type Consumer struct {
 	cl    *kgo.Client // set after NewClient returns: never read it from callbacks
 	Stats Stats
 
+	// Loop instrumentation (loopstats.go): window is Run's alone; fetch is
+	// written by franz-go's fetch goroutines through the hook.
+	window   loopWindow
+	fetch    fetchStats
+	lastRows int64
+
 	mu      sync.Mutex
 	open    map[int32]*batch // being filled
 	ready   []*batch         // full or due, to flush this iteration
@@ -107,6 +113,7 @@ func New(cfg Config) (*Consumer, error) {
 		kgo.OnPartitionsAssigned(c.onAssigned),
 		kgo.OnPartitionsRevoked(c.onRevoked),
 		kgo.OnPartitionsLost(c.onRevoked),
+		kgo.WithHooks(&c.fetch),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("kafka client: %w", err)
@@ -308,10 +315,20 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}()
 	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
+	c.cfg.Log.Info("fetch limits",
+		"fetch_max_bytes", c.cl.OptValue(kgo.FetchMaxBytes),
+		"fetch_max_partition_bytes", c.cl.OptValue(kgo.FetchMaxPartitionBytes),
+		"max_concurrent_fetches", c.cl.OptValue(kgo.MaxConcurrentFetches),
+		"poll_wait", c.cfg.PollWait.String())
+	c.window = loopWindow{start: time.Now()}
 	for {
+		var it iteration
+		t0 := time.Now()
 		pctx, cancel := context.WithTimeout(ctx, c.cfg.PollWait)
 		fs := c.cl.PollFetches(pctx)
 		cancel()
+		t1 := time.Now()
+		it.poll = t1.Sub(t0)
 		fs.EachError(func(t string, p int32, err error) {
 			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 				c.cfg.Log.Warn("fetch error", "topic", t, "partition", p, "err", err)
@@ -324,15 +341,27 @@ func (c *Consumer) Run(ctx context.Context) error {
 			c.mu.Unlock()
 			return err
 		}
+		fs.EachPartition(func(p kgo.FetchTopicPartition) {
+			if n := len(p.Records); n > 0 {
+				it.msgs += n
+				it.parts++
+			}
+		})
 		fs.EachRecord(c.add)
 		stopping := ctx.Err() != nil
 		bs := c.takeReady(time.Now(), stopping)
 		c.mu.Unlock()
+		t2 := time.Now()
+		it.add = t2.Sub(t1)
+		it.batches = len(bs)
 
 		// While running, a failing insert retries until ctx ends. When
 		// stopping, ctx is already done, so the final flush gets one
 		// attempt per batch (plus the in-flight rule in flush).
-		if err := c.flush(ctx, bs); err != nil {
+		err := c.flush(ctx, bs)
+		t3 := time.Now()
+		it.flush = t3.Sub(t2)
+		if err != nil {
 			// Not committed, so not lost: the next owner re-reads them.
 			return fmt.Errorf("flush: %w", err)
 		}
@@ -345,6 +374,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 		cctx, cancelC := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		c.commit(cctx, bs)
 		cancelC()
+		it.commit = time.Since(t3)
+		c.window.observe(it)
 		if stopping {
 			c.logStats()
 			return nil
@@ -360,6 +391,12 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 func (c *Consumer) logStats() {
 	s := &c.Stats
+	now := time.Now()
+	rows := s.Rows.Load()
+	partCap, _ := c.cl.OptValue(kgo.FetchMaxPartitionBytes).(int32)
+	c.cfg.Log.Info("loop", c.window.attrs(now, c.fetch.take(), rows-c.lastRows, partCap)...)
+	c.lastRows = rows
+	c.window = loopWindow{start: now}
 	ins := s.Inserts.Load()
 	var avg time.Duration
 	if ins > 0 {

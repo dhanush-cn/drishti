@@ -88,7 +88,7 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 docker compose up -d kafka clickhouse
 scripts/create-tables.sh
 docker compose up -d --build storage receiver
-docker compose logs -f storage     # "stats" every 10 s: records, rows, inserts, avg_insert_ms, skipped_replayed
+docker compose logs -f storage     # every 10 s: "stats" (cumulative) and "loop" (that window only)
 scripts/storage-check.sh <run_id>  # after a loadgen run: loss/dup per seq, path latency
 ```
 
@@ -117,9 +117,36 @@ ClickHouse 26.8.21. Generator with `-stamp` (timestamps = send time, `drishti.lo
 - At 150k the generator also reported `saturated=26`: the receiver was healthy at 150k alone (pprof run PASS), so this is CPU contention with ClickHouse and the consumer on one laptop.
 - **Atomicity assumption held:** `system.part_log` shows 674 insert queries, **0 with more than one part**.
 - **`async_insert` defaults to 1 on 26.8.21** (`changed = 0`): sending `async_insert=0` explicitly was necessary, not defensive.
-- **Projection on 26.8:** the driver's `EXPLAIN` ran on an empty table (`ReadNothing`), so it proved nothing; re-check with data: `EXPLAIN SELECT kafka_partition, max(kafka_offset) FROM drishti.logs GROUP BY kafka_partition` should show `ReadFromMergeTree (ingest_progress)`.
+- **Projection on 26.8:** the driver's `EXPLAIN` ran on an empty table (`ReadNothing`), so it proved nothing. Re-checked with data (20 Oct, ~21M rows): `EXPLAIN indexes = 1 SELECT kafka_partition, max(kafka_offset) FROM drishti.logs GROUP BY kafka_partition` shows `ReadFromMergeTree (ingest_progress)`, 17 parts / 17 granules, one granule per part. The resume query reads the projection, not the table.
 - **Kill test (50k, `kill -9` at ~27 s, restart 5 s later):** 3.50M rows = every acked record, 0 short, 0 long. The replacement inserted nothing for ~47 s (the dead member's session timeout), then caught up 30 s after the generator stopped; event → queryable p50 28 s for that run. `skipped_replayed` was 0 again: no kill so far has landed between an insert and its commit, so the live replay-skip path is still only covered by the unit test. Week 3: session timeout / static membership, and a kill timed inside an insert.
 - **Compression on this synthetic data** (21M rows, 2.59 GiB on disk, ~132 B/row): `body` 2.7x and `log_attributes` 3.7x (the generator pads bodies and fills attributes with random hex, which doesn't compress); `resource_attributes` 32x, timestamps 420–540x, LowCardinality columns 150–180x. Real OTLP from the demo will differ; measure it before tuning codecs.
+
+## Reading the loop line (Week 3 instrumentation)
+
+The ~70k rows/s ceiling came with idle CPU, so the question is where the loop spends its time. `Run` is serial: **poll → add (decode + RowBinary encode) → flush (wait for every due insert) → commit**, then poll again. Every 10 s the consumer logs a `loop` line covering only that window (`internal/storage/loopstats.go`), next to the cumulative `stats` line. At startup it logs `fetch limits` (the client's real `FetchMaxBytes`, `FetchMaxPartitionBytes`, `MaxConcurrentFetches`, `poll_wait`).
+
+| Field | Meaning |
+|---|---|
+| `poll_pct` / `add_pct` / `flush_pct` / `commit_pct` / `other_pct` | share of the window's wall time in each phase; serial loop, so they sum to 100 |
+| `msgs`, `msgs_per_poll`, `max_msgs_per_poll` | Kafka records (one OTLP resource, 512 log rows at the benchmark shape) per non-empty poll |
+| `parts_per_poll` | partitions with data per non-empty poll (6 = every partition had data) |
+| `kib_per_part_fetch` vs `cap_kib` | compressed KiB a partition brought per fetch, from franz-go's `OnFetchBatchRead` hook, against `FetchMaxPartitionBytes` (default 1 MiB). The broker fills a partition's share with whole record batches up to the cap, so **near `cap_kib` = fetches come back full** |
+| `fetch_compressed_mib` / `fetch_uncompressed_mib` | what was fetched in the window: the lz4 ratio on the wire |
+| `flushes`, `batches_per_flush`, `avg_flush_ms`, `max_flush_ms` | iterations that inserted, and how long the loop stood still for ClickHouse each time |
+| `rows_per_s`, `avg_iter_ms` | rows inserted in the window per second; wall time per iteration |
+
+Why each fetch is bounded: with one broker, franz-go keeps **at most one fetch buffered** (`MaxConcurrentFetches` default = number of brokers). The next fetch is only requested once the buffered one has been polled. So each iteration gets at most one fetch (≤ ~1 MiB compressed per partition), and the loop's iteration time decides how often a fetch goes out.
+
+How to read it at the ceiling (100k and 150k offered, consumer behind):
+
+| What the lines show | Meaning | Next change |
+|---|---|---|
+| `flush_pct` high, `kib_per_part_fetch` near `cap_kib` | the loop stands still during inserts, and each iteration only brings in one capped fetch | pipeline inserts (keep polling and encoding while the previous batch is written, commit in offset order) **and** raise `FetchMaxPartitionBytes` |
+| `poll_pct` high, `kib_per_part_fetch` near `cap_kib` | waiting on the fetch round trip, a full 1 MiB per partition each time: the fetch size is the limit | raise `FetchMaxPartitionBytes` first |
+| `poll_pct` high, fetches well under `cap_kib` | Kafka has less to give than we can take; check that lag is actually growing | look at the receiver / broker, not the consumer |
+| `add_pct` high (consumer near 1 core) | decode + encode on one goroutine is the limit | parallelise decode per partition, profile `AppendLogs` |
+
+The instrumentation reads clocks four times per iteration and does not change behaviour. Every iteration is counted, empty polls included.
 
 ## Revert-proofs (break → red → revert → green)
 
@@ -130,3 +157,6 @@ ClickHouse 26.8.21. Generator with `-stamp` (timestamps = send time, `drishti.lo
 | Row cut | drop the row condition from the cut and make `full` return false | same test: `[{0 0} {1 4}]` (verified) |
 | Recreated-topic guard | make `stored >= end.Offset` always false | `TestRun_RefusesStoredOffsetsBeyondTopicEnd`: `err = <nil>` (verified) |
 | AllowRebalance before Close | delete it from `Run`'s defer | every `TestRun_*` hangs in `LeaveGroup` (found that way) |
+| Fetch hook | drop `kgo.WithHooks(&c.fetch)` from `New` | `TestRun_LoopLineAccountsForEveryMessage`: `kib_per_part_fetch never > 0` (verified) |
+| Message count per poll | stop adding `n` to `it.msgs` | same test: `counted 0 messages, want 21` (verified) |
+| Window observe | drop `c.window.observe(it)` from `Run` | same test: 0 messages, no flush counted (verified) |
