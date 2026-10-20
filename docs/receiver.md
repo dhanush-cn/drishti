@@ -93,6 +93,52 @@ go tool pprof -top -cum -nodecount=40 cpu.pprof
 
 The load generator profiles itself with `-cpuprofile` (warm-up + steady + drain, not pool generation) into `cpu.pprof` in its run directory.
 
+## Measured, 20 Oct (laptop, internal: provisional thresholds, not quotable)
+
+Core 7 240H, 16 threads, WSL 15 GiB, AC + Best performance. 512 records/request, 1 resource/request, `-stamp=false` (Week 1 payloads), gzip. Generator, receiver and Kafka share the laptop. Raw data: `Downloads/drishti-week2/results/`.
+
+### Knee: sustainable 175k, knee at 200k
+
+| rec/s | verdict ×3 | p50 ms | p99 ms | receiver cores | generator cores | Kafka cores |
+|---|---|---|---|---|---|---|
+| 175k | PASS, PASS, PASS | 31–37 | 189–608 | 4.2–4.5 | 3.1–3.4 | 0.6–0.8 |
+| 200k | FAIL, FAIL, PASS (**knee**) | 55–104 | 765–1216 | 5.0–5.2 | 3.8–3.9 | 0.6–0.7 |
+| 225k | FAIL ×3 | 186–208 | 1347–1425 | 5.3–5.4 | 4.2–4.4 | 0.6 |
+
+- At 225k the generator kept its schedule (lag ≤ 19 ms) while achieved fell 1.4–2.8% short and up to 749 requests saturated: the system, not the generator, ran out.
+- The stack used ~9.5 "cores" of 16 threads at 200k, about 40% of it the generator. On one laptop, the generator's cost moves the knee (`docs/loadgen.md` §12: pre-compressed payloads are now triggered).
+- **Unexplained:** at 175k, p99 was 189–608 ms vs 54–85 ms on 13 Oct, and the receiver used ~12% more core-time per record (4.2–4.5 vs 3.8 cores). Same code path, same payloads. A lower CPU clock (thermal or power state) would explain both; nothing records it yet. Pass 2's `env.json` should.
+
+### The ~22 ms p50 floor: per-record CPU on both ends, not linger
+
+20k rec/s, 30 s steady, 3 repeats each:
+
+| Config | p50 ms (3 runs) |
+|---|---|
+| baseline: 512 rec/req, linger 5 ms | 25.8, 24.2, 25.7 |
+| linger 0 | 24.5, 24.4, 24.5 |
+| 128 rec/req | 12.0, 11.8, 11.7 |
+
+- **Linger is not it:** −0.7 ms (I predicted −5 ms; wrong).
+- Fitting p50 = a + b × records/request through the two batch sizes: **b ≈ 35 µs per record**, **a ≈ 7 ms per request**. The per-record slope matches the measured CPU cost of one record on both ends (receiver ~22 µs + generator ~16 µs from the Week 1 sweep): each 512-record request is processed serially, on one goroutine, by both sides. The ~7 ms fixed part is per request: produce round trip with acks, gRPC, scheduling.
+- So the floor is a request-size effect, not a delay: smaller requests have lower latency at the same record rate (at the cost of 4x the requests and ~1.3x the receiver CPU at 20k: 0.60 vs 0.45 cores).
+
+### CPU profile at 150k (30 s, `results/pprof/receiver.*`)
+
+3.73 cores sampled. Largest cumulative costs:
+
+| Where | cum % |
+|---|---|
+| gzip decompression (`flate.huffmanBlock`), of which gRPC's `mem.Reader.ReadByte` (byte-at-a-time reads) ~9.7% | 24.7 |
+| protobuf unmarshal (`unmarshalPointerEager`) | 23.7 |
+| lz4 compression for Kafka (`lz4block.CompressBlock`) | 15.2 |
+| protobuf size computation (`sizePointerSlow`: split + re-marshal) | 8.8 |
+
+About 40% is codec work (gunzip + lz4) and about a third is decoding and re-encoding protobuf. That is ~22 µs per record. Week 3 candidates, each to be measured, not assumed:
+1. **Pass-through for one-resource requests** (all observed collector traffic, `docs/loadgen.md` §13): the request bytes already are a valid Kafka value; only `service.name` has to be read. Skips unmarshal + size + re-marshal.
+2. **Faster gzip decoding**: a buffered reader in front of flate, or klauspost's decoder (already a dependency).
+3. **Kafka compression**: lz4 vs none vs zstd, with broker disk and network in the comparison.
+
 ## Revert-proofs (break → red → revert → green)
 
 | Mechanism | Break it | Expected failure |

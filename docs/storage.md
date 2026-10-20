@@ -100,6 +100,27 @@ A new consumer group starts at the **end** of `otlp.logs` here (`DRISHTI_STORAGE
 - **End to end, cloud VM** (in-memory Kafka + ClickHouse 26.9 engine behind a small HTTP shim; not benchmark numbers): loadgen 10k rec/s, 22 s → 219,648 rows = ingested records, 429 seqs, none short or long, **including a `kill -9` of the consumer mid-run and a restart**. That kill landed after a commit, so `skipped_replayed` was 0; the unit test covers the gap deterministically.
 - Bugs found on the way: a **data race** (`-race`, only when applying the patches to a fresh clone): `kgo.NewClient` starts group management at once, so `onAssigned` could run before `New` had stored the admin client; it now uses the client the callback is handed. `Close` hung in `LeaveGroup` (with `BlockRebalanceOnPoll` you must `AllowRebalance` first); a shutdown mid-insert returned `context canceled` (now the in-flight attempt completes); the startup check quoted the table with Go's `"…"`, which ClickHouse reads as an identifier (`UNKNOWN_IDENTIFIER`), found only end to end.
 
+## Measured, 20 Oct (laptop, internal, 1 run per rate)
+
+ClickHouse 26.8.21. Generator with `-stamp` (timestamps = send time, `drishti.loadgen.seq`), 512 records/request, 70 s per run (10 s warm-up + 60 s steady). Receiver, Kafka, consumer, ClickHouse and generator share the laptop. Raw data: `Downloads/drishti-week2/results/storage/`.
+
+| rec/s | loss / dup (per seq) | event → queryable p50 / p99 | caught up after generator stopped | rows / insert | consumer cores | ClickHouse cores |
+|---|---|---|---|---|---|---|
+| 50k | 0 / 0 (3.50M rows, 6,835 seqs) | **1.36 s / 2.64 s** | 2 s | 19,771 | 0.46 | 0.87 |
+| 100k | 0 / 0 (7.00M, 13,671) | 3.2 s / 37.5 s | 27 s | 34,481 | 0.65 | 1.38 |
+| 150k | 0 / 0 (10.49M, 20,481) | 40 s / 86 s | 80 s | 35,668 | 0.65 | 1.26 |
+
+- **Every acknowledged record stored exactly once in every run**, including the kill test.
+- **The 5 s event → queryable target holds at 50k** (p99 2.64 s; the 2 s age cut plus a ~0.35 s insert). Above that the consumer falls behind.
+- **Storage ceiling ≈ 70k records/s:** 7.00M rows in 97 s at 100k (72k/s), 10.49M rows in 150 s at 150k (70k/s). The same number at two offered rates means a fixed ceiling.
+- **First storage bottleneck: not CPU.** The consumer averaged 0.65 cores and ClickHouse 1.3 of 16 threads while lag grew. Inserts took ~360 ms on average (`avg_insert_ms`). Hypothesis for Week 3: the loop is serial (poll → decode → **wait for the insert** → commit), and franz-go buffers one fetch at a time with a 1 MiB per-partition fetch limit, so each ~0.4 s iteration brings in roughly one fetch's worth of records. Test it by logging records per poll and loop time, then pipeline inserts (decode the next batch while the previous one is being written, commit in order) and raise `FetchMaxPartitionBytes`.
+- At 150k the generator also reported `saturated=26`: the receiver was healthy at 150k alone (pprof run PASS), so this is CPU contention with ClickHouse and the consumer on one laptop.
+- **Atomicity assumption held:** `system.part_log` shows 674 insert queries, **0 with more than one part**.
+- **`async_insert` defaults to 1 on 26.8.21** (`changed = 0`): sending `async_insert=0` explicitly was necessary, not defensive.
+- **Projection on 26.8:** the driver's `EXPLAIN` ran on an empty table (`ReadNothing`), so it proved nothing; re-check with data: `EXPLAIN SELECT kafka_partition, max(kafka_offset) FROM drishti.logs GROUP BY kafka_partition` should show `ReadFromMergeTree (ingest_progress)`.
+- **Kill test (50k, `kill -9` at ~27 s, restart 5 s later):** 3.50M rows = every acked record, 0 short, 0 long. The replacement inserted nothing for ~47 s (the dead member's session timeout), then caught up 30 s after the generator stopped; event → queryable p50 28 s for that run. `skipped_replayed` was 0 again: no kill so far has landed between an insert and its commit, so the live replay-skip path is still only covered by the unit test. Week 3: session timeout / static membership, and a kill timed inside an insert.
+- **Compression on this synthetic data** (21M rows, 2.59 GiB on disk, ~132 B/row): `body` 2.7x and `log_attributes` 3.7x (the generator pads bodies and fills attributes with random hex, which doesn't compress); `resource_attributes` 32x, timestamps 420–540x, LowCardinality columns 150–180x. Real OTLP from the demo will differ; measure it before tuning codecs.
+
 ## Revert-proofs (break → red → revert → green)
 
 | Mechanism | Break it | Expected failure |
