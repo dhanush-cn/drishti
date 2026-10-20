@@ -111,12 +111,19 @@ services:
     volumes:
       - kafka-data:/var/lib/kafka/data
     mem_limit: 3g
+    # The check starts a fresh JVM (kafka-broker-api-versions.sh): ~2 cores
+    # for ~2 s. At the old 10 s interval that was a ~2.3-core spike every
+    # ~12 s in every benchmark run, at every rate (Week 1 sweep stats).
+    # start_interval keeps startup detection fast (every 3 s during the
+    # first 45 s); after that the check runs once a minute. Benchmarks start
+    # at least start_period after Kafka starts.
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-      interval: 10s
+      interval: 60s
       timeout: 10s
-      retries: 10
-      start_period: 30s
+      retries: 3
+      start_period: 45s
+      start_interval: 3s
 
   clickhouse:
     image: clickhouse/clickhouse-server:26.8
