@@ -66,6 +66,7 @@ func main() {
 		maxLag   = flag.Duration("max-lag", 50*time.Millisecond, "max schedule lag (§13: provisional)")
 		p99      = flag.Duration("p99", time.Second, "p99 bound for PASS (§13: provisional)")
 		stamp    = flag.Bool("stamp", true, "per send: set record timestamps to send time and tag resources with drishti.loadgen.seq (§12); -stamp=false sends pool requests as built (Week 1 behaviour)")
+		precomp  = flag.Bool("precompress", false, "marshal + gzip each pool request once before the run and send those bytes (needs -stamp=false and -gzip): the generator's per-send CPU drops to ~0, so receiver-only sweeps measure the receiver (§12)")
 		cpuProf  = flag.Bool("cpuprofile", false, "write the generator's own CPU profile (warm-up + steady + drain) to cpu.pprof in the run directory")
 	)
 	flag.Parse()
@@ -75,6 +76,9 @@ func main() {
 	}
 	if *rate <= 0 {
 		fail("-rate is required (log records per second)")
+	}
+	if *precomp && (*stamp || !*useGzip) {
+		fail("-precompress needs -stamp=false (stamped sends differ every time) and -gzip")
 	}
 	if *conns != 1 {
 		fail("-conns > 1 is Pass 2 (N ClientConns, round-robin); not built yet")
@@ -92,7 +96,17 @@ func main() {
 	}
 	meanReq := totalBytes / len(pool)
 
-	conn, err := grpc.NewClient(*target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	var frames map[*collogs.ExportLogsServiceRequest]*loadgen.Frame
+	if *precomp {
+		if frames, err = loadgen.PrecompressLogs(pool); err != nil {
+			fail("precompress: %v", err)
+		}
+		// Per connection, not the global "gzip" registration: frames are
+		// labelled gzip and written as they are.
+		dialOpts = append(dialOpts, grpc.WithCompressor(loadgen.PassGzip{}))
+	}
+	conn, err := grpc.NewClient(*target, dialOpts...)
 	if err != nil {
 		fail("dial: %v", err)
 	}
@@ -104,7 +118,11 @@ func main() {
 	client := collogs.NewLogsServiceClient(conn)
 	var callOpts []grpc.CallOption
 	compression := "none"
-	if *useGzip {
+	switch {
+	case *precomp:
+		callOpts = append(callOpts, grpc.ForceCodecV2(loadgen.NewFrameCodec()))
+		compression = "gzip (pre-compressed)"
+	case *useGzip:
 		callOpts = append(callOpts, grpc.UseCompressor(gzip.Name))
 		compression = "gzip"
 	}
@@ -115,7 +133,14 @@ func main() {
 			// "application" emitted the record, which is now.
 			req = loadgen.Stamp(req, uint64(time.Now().UnixNano()), seq.Add(1))
 		}
-		resp, err := client.Export(ctx, req, callOpts...)
+		var resp *collogs.ExportLogsServiceResponse
+		var err error
+		if frames != nil {
+			resp = new(collogs.ExportLogsServiceResponse)
+			err = conn.Invoke(ctx, collogs.LogsService_Export_FullMethodName, frames[req], resp, callOpts...)
+		} else {
+			resp, err = client.Export(ctx, req, callOpts...)
+		}
 		if err != nil {
 			return 0, err
 		}
