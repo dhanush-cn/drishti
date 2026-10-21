@@ -39,7 +39,7 @@ sender ──gRPC/gzip──► otlpgrpc (thin) ──► ingest (split, key, ti
 - Resources over `--max-message-bytes` (900 KiB, under Kafka's ~1 MiB `max.message.bytes`) are split by halving, order preserved. A single record that can't fit alone is dropped and reported as OTLP **partial success** (not retryable; retrying can't make it fit).
 - Metrics split at whole-`Metric` granularity; rejections are counted in data points, as the spec requires.
 - Separate topic per signal: different schema, different consumers.
-- Known risk: one noisy service = one hot partition. That's week 3's hot-partition work.
+- Known risk: one noisy service = one hot partition. Resources without `service.name` used to share one key; decision 8 spreads them.
 - Topics have 6 partitions (`scripts/create-topics.sh`). Adding partitions later remaps keys, so per-service ordering breaks across the change.
 - The partitioner is set explicitly through `internal/partitioning.New()`, not inherited. It is franz-go's default (`UniformBytesPartitioner`, murmur2 for keyed records, same as the Java client), so existing data keeps its key → partition mapping. The load generator predicts partitions with the same constructor (`docs/loadgen.md` §7). `TestNew_MatchesLibraryDefault` proves equivalence with the library default; `TestForKey_ObservedPairs` pins pairs observed in Kafka on 10 Oct (`smoke-svc-1`, `smoke-svc-2` → p0, `smoke-svc-0` → p2).
 
@@ -162,11 +162,24 @@ Decision 3 makes the Kafka value an `ExportLogsServiceRequest` with exactly one 
 - Cloud VM microbenchmark (`BenchmarkExportLogs512`, relative only): split path ~0.37–0.42 ms and 230 KB allocated per 512-record request after decoding; raw path ~1 µs. Against ~11 ms of receiver CPU per request on the laptop, expect a few percent, not a step change; the laptop profile decides.
 - Metrics keep the split path: scraper batches carry many resources (§13), so pass-through would rarely apply.
 
+### 8. Hot partition: key fallback `service.name` → `container.name` → `host.name` (patch 22)
+
+**Observed 10 Oct:** `otlp.metrics` partition 1 held 686 of 758 messages (~90%), all keyed `unknown_service`. The collector's scraper receivers (docker_stats, host metrics, redis, postgresql, nginx, http_check) emit resources without `service.name`, so they all shared one key and one partition.
+
+| Option | Verdict |
+|---|---|
+| Null key for unattributed resources | Spreads load, but loses per-series ordering and fixes nothing for attribution. Rejected |
+| Collector `resource`/`transform` processor sets `service.name` from `container.name` | Fixes attribution at the source, but our extras file replaces whole pipeline arrays (decision in `test-harness.md`): editing `processors` there risks dropping the demo's own processors. Deferred to Week 4, when the detector needs per-container attribution and the change can be tested on its own |
+| **Receiver key fallback** `container.name` → `host.name` → `unknown_service` | **Chosen now.** Spreads scraper traffic by what it describes, keeps each container's/host's series ordered on one partition, changes nothing for resources that have `service.name`, so existing keys and the load generator's partition predictions are unchanged |
+
+What it does not do: the stored `service` column is unchanged (still `service.name` or `unknown_service`); `container.name` is in `resource_attributes` for queries. `week3b.sh` step `hot` runs the demo and records messages per partition and the top keys, to compare with 10 Oct's 90%.
+
 ## Revert-proofs (break → red → revert → green)
 
 | Mechanism | Break it | Expected failure |
 |---|---|---|
 | gzip support | register `gzipCodec` under another name (`Name()` returns `"gzip-k"`) | `TestGzipCompressorIsOurs`: `registered gzip compressor is <nil>` (verified); `TestExport_GzipFromCollectorIsAccepted` |
+| Key fallback | `keyAttributes = []string{"service.name"}` | `TestServiceKey_FallsBackToContainerThenHost`: `= "unknown_service", want "ad-container"` (verified) |
 | Pass-through | make the condition in `ExportLogsRaw` always false | `TestExportLogsRaw_OneResourcePublishesTheRequestBytes`: `value is not the request's bytes (re-encoded?)`; `TestExport_OneResourceRequestPassesThroughAsSent`: `paths pass-through=0 split=1` (verified) |
 | Raw handler | register with `collogs.RegisterLogsServiceServer` again | `TestExport_OneResourceRequestPassesThroughAsSent`: `paths pass-through=0 split=1` (verified) |
 | Compression flag | hardcode `kgo.Lz4Compression()` in `kafkasink.New` | `TestPublish_CompressionCodecOnTheWire`: `batch codecs on the wire map[3:2], want only 4` (and 0, 1, 2) (verified) |

@@ -230,3 +230,29 @@ func TestExport_PartialSuccessReported(t *testing.T) {
 		t.Fatal("the records that fit were not published")
 	}
 }
+
+func TestServiceKey_FallsBackToContainerThenHost(t *testing.T) {
+	kv := func(pairs ...string) *resourcev1.Resource {
+		r := &resourcev1.Resource{}
+		for i := 0; i < len(pairs); i += 2 {
+			r.Attributes = append(r.Attributes, &commonv1.KeyValue{Key: pairs[i], Value: str(pairs[i+1])})
+		}
+		return r
+	}
+	for _, tc := range []struct {
+		want string
+		r    *resourcev1.Resource
+	}{
+		{"cart", kv("host.name", "h1", "container.name", "c1", "service.name", "cart")},
+		{"ad-container", kv("host.name", "h1", "container.name", "ad-container")},
+		{"h1", kv("host.name", "h1", "service.name", "")},
+		{"c2", kv("service.name", "", "container.name", "c2")},
+		{unknownService, kv("os.type", "linux")},
+		{unknownService, nil},
+	} {
+		want, r := tc.want, tc.r
+		if got := string(serviceKey(r)); got != want {
+			t.Errorf("serviceKey(%v) = %q, want %q", r.GetAttributes(), got, want)
+		}
+	}
+}

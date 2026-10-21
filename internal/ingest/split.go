@@ -49,11 +49,24 @@ func chunk(refs []ref, max int, size func([]ref) int) (groups [][]ref, rejected 
 	return append(g1, g2...), append(r1, r2...)
 }
 
+// keyAttributes are tried in order for the Kafka key (docs/receiver.md
+// decision 8). service.name first: per-service ordering and partition
+// locality are the point of keying. The collector's scraper receivers
+// (docker_stats, host metrics, redis, postgresql, nginx, ...) emit
+// resources without it; with a single fallback key all of them shared one
+// partition (~90% of otlp.metrics on partition 1, 10 Oct). container.name,
+// then host.name, spread them by what they describe, and keep each
+// container's or host's series in order.
+var keyAttributes = []string{"service.name", "container.name", "host.name"}
+
 func serviceKey(r *resourcev1.Resource) []byte {
-	for _, kv := range r.GetAttributes() {
-		if kv.GetKey() == "service.name" {
-			if s := kv.GetValue().GetStringValue(); s != "" {
-				return []byte(s)
+	attrs := r.GetAttributes()
+	for _, k := range keyAttributes {
+		for _, kv := range attrs {
+			if kv.GetKey() == k {
+				if s := kv.GetValue().GetStringValue(); s != "" {
+					return []byte(s)
+				}
 			}
 		}
 	}
