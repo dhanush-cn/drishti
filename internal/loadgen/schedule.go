@@ -16,12 +16,51 @@ type Schedule struct {
 	Start time.Time
 	Rate  float64 // requests per second
 	Total int     // number of requests in the whole run (warm-up + steady)
+	Burst *Burst  // optional: a window at a different rate
+}
+
+// Burst is a window [At, At+For) after Start in which requests are due at
+// Rate instead of the schedule's base rate (docs/loadgen.md §14).
+type Burst struct {
+	At, For time.Duration
+	Rate    float64 // requests per second during the burst
 }
 
 // Due returns request i's due time. It is computed from i directly, not by
-// adding an interval repeatedly, so rounding error never accumulates.
+// adding an interval repeatedly, so rounding error never accumulates. With
+// a burst the schedule is piecewise: base rate, burst rate, base rate,
+// continuous at both edges.
 func (s Schedule) Due(i int) time.Time {
-	return s.Start.Add(time.Duration(float64(i) * float64(time.Second) / s.Rate))
+	if s.Burst == nil {
+		return s.Start.Add(time.Duration(float64(i) * float64(time.Second) / s.Rate))
+	}
+	b := s.Burst
+	n1 := b.At.Seconds() * s.Rate // requests due before the burst
+	n2 := n1 + b.For.Seconds()*b.Rate
+	fi := float64(i)
+	var sec float64
+	switch {
+	case fi < n1:
+		sec = fi / s.Rate
+	case fi < n2:
+		sec = b.At.Seconds() + (fi-n1)/b.Rate
+	default:
+		sec = (b.At + b.For).Seconds() + (fi-n2)/s.Rate
+	}
+	return s.Start.Add(time.Duration(sec * float64(time.Second)))
+}
+
+// Requests is how many requests fall due in the first d of the schedule.
+func (s Schedule) Requests(d time.Duration) int {
+	if s.Burst == nil || d <= s.Burst.At {
+		return int(d.Seconds() * s.Rate)
+	}
+	b := s.Burst
+	n := b.At.Seconds()*s.Rate + min(d-b.At, b.For).Seconds()*b.Rate
+	if d > b.At+b.For {
+		n += (d - b.At - b.For).Seconds() * s.Rate
+	}
+	return int(n)
 }
 
 // Clock is the time source; tests substitute a fake.

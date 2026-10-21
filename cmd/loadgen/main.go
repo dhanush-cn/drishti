@@ -66,6 +66,9 @@ func main() {
 		maxLag   = flag.Duration("max-lag", 50*time.Millisecond, "max schedule lag (§13: provisional)")
 		p99      = flag.Duration("p99", time.Second, "p99 bound for PASS (§13: provisional)")
 		stamp    = flag.Bool("stamp", true, "per send: set record timestamps to send time and tag resources with drishti.loadgen.seq (§12); -stamp=false sends pool requests as built (Week 1 behaviour)")
+		bRate    = flag.Float64("burst-rate", 0, "records/s during a burst inside the steady window; 0 = no burst (§14)")
+		bAt      = flag.Duration("burst-at", 0, "burst start, from the start of the run (warm-up included); must be >= -warmup")
+		bFor     = flag.Duration("burst-for", 60*time.Second, "burst length")
 		precomp  = flag.Bool("precompress", false, "marshal + gzip each pool request once before the run and send those bytes (needs -stamp=false and -gzip): the generator's per-send CPU drops to ~0, so receiver-only sweeps measure the receiver (§12)")
 		cpuProf  = flag.Bool("cpuprofile", false, "write the generator's own CPU profile (warm-up + steady + drain) to cpu.pprof in the run directory")
 	)
@@ -148,6 +151,10 @@ func main() {
 	}
 
 	cfg := loadgen.Config{Rate: *rate, Warmup: *warmup, Duration: *duration, Timeout: *timeout, Inflight: *inflight}
+	if *bRate > 0 {
+		cfg.BurstRate, cfg.BurstAt, cfg.BurstFor = *bRate, *bAt, *bFor
+		fmt.Printf("burst: %.0f records/s from %s to %s\n", *bRate, *bAt, *bAt+*bFor)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -204,6 +211,7 @@ func main() {
 		Config: loadgen.ConfigReport{
 			RateRecordsPerSec: *rate, WarmupSec: warmup.Seconds(), DurationSec: duration.Seconds(),
 			TimeoutSec: timeout.Seconds(), Inflight: *inflight, Target: *target,
+			BurstRate: cfg.BurstRate, BurstAtSec: cfg.BurstAt.Seconds(), BurstForSec: cfg.BurstFor.Seconds(),
 		},
 		Thresholds: th,
 		Summary:    sum,

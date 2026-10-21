@@ -257,3 +257,11 @@ SDK override check: no `OTEL_BLRP_*` in `.env*` or `compose*.yaml`, and no batch
 **Decided (13 Oct): resources per request defaults to 1** (§6), services rotating across requests, so the default request shape matches observed collector traffic. 20 stays a sweep point. This changes Kafka message size (one ~246 KB message per request vs twenty ~12 KB ones), so the first Pass 1 runs (20 resources per request) are not comparable with runs after the change; `run.json` records the value.
 
 **Week 3:** batch size becomes a sweep parameter (e.g. 64 / 512 / 2048), so the default needs a defensible source, not a perfect one.
+
+## 14. Burst schedule (Week 3)
+
+`-burst-rate R -burst-at T -burst-for D`: inside the steady window, requests fall due at `R` records/s during `[T, T+D)` from the start of the run (warm-up included), and at `-rate` before and after. The schedule stays arithmetic (§3): `Due(i)` is computed piecewise from `i`, continuous at both edges (`TestSchedule_BurstIsPiecewiseAndContinuous`: request 20 is due exactly at the burst start, request 50 exactly at its end), so a burst never skips or bunches requests at the switch.
+
+- Burst requests count in the steady window (the verdict judges loss and errors over all of it) and also in a `burst` window, so `run.json` shows the burst on its own: offered and ingested records, non-OK codes, saturation, p50/p99/max.
+- The burst must lie inside the steady window; anything else is refused at start.
+- The project target (`PROJECT_CONTEXT.md` §6) is 3× load for 60 s with zero loss and the backlog cleared within minutes. The receiver side is this run's verdict; the storage side is checked separately by `storage-check.sh` (loss/dup per seq) and the consumer-lag sampler in `week3b.sh` (backlog peak and time to clear).

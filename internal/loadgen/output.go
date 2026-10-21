@@ -61,6 +61,9 @@ type ConfigReport struct {
 	TimeoutSec        float64 `json:"timeout_sec"`
 	Inflight          int     `json:"inflight"`
 	Target            string  `json:"target"`
+	BurstRate         float64 `json:"burst_records_per_sec,omitempty"`
+	BurstAtSec        float64 `json:"burst_at_sec,omitempty"`
+	BurstForSec       float64 `json:"burst_for_sec,omitempty"`
 }
 
 // DirName is bench/runs/<UTC-timestamp>-<run_id>/ (§9).

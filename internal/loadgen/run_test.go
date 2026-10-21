@@ -260,3 +260,26 @@ func TestRun_NonIntegralRequestRateIsNotUnderReported(t *testing.T) {
 	}
 	_ = r
 }
+
+// A burst run: burst requests are counted in their own window and in the
+// steady window the verdict judges.
+func TestRun_BurstCountsInBurstAndSteadyWindows(t *testing.T) {
+	cfg := Config{Rate: 1000, Warmup: 100 * time.Millisecond, Duration: 400 * time.Millisecond, Timeout: time.Second, Inflight: 256,
+		BurstRate: 3000, BurstAt: 200 * time.Millisecond, BurstFor: 100 * time.Millisecond}
+	r, s, v := run(t, cfg, 10, ok) // 100 req/s base, 300 req/s burst
+	if !v.Pass {
+		t.Fatalf("healthy burst run failed: %v", v.Reasons)
+	}
+	if r.Warmup.Scheduled != 10 || r.Burst.Scheduled != 30 || r.Steady.Scheduled != 60 {
+		t.Fatalf("scheduled warm-up/burst/steady = %d/%d/%d, want 10/30/60 (steady = 30 base + 30 burst)",
+			r.Warmup.Scheduled, r.Burst.Scheduled, r.Steady.Scheduled)
+	}
+	if s.Burst == nil || s.Burst.IngestedRecords != 300 || s.Burst.RecordsPerSec != 3000 {
+		t.Fatalf("burst summary %+v", s.Burst)
+	}
+	bad := cfg
+	bad.BurstAt = 0 // inside warm-up
+	if _, err := Run(context.Background(), RealClock, bad, testPool(t, 10), ok); err == nil {
+		t.Fatal("burst inside the warm-up accepted")
+	}
+}

@@ -35,6 +35,11 @@ type Config struct {
 	Duration time.Duration // steady-state window after warm-up
 	Timeout  time.Duration // client-side deadline per RPC (§4), collector default 5s
 	Inflight int           // max concurrent RPCs; beyond it a request is saturated (§3)
+
+	// Optional burst (§14): records/s during [BurstAt, BurstAt+BurstFor)
+	// from the start of the run. It must lie inside the steady window.
+	BurstRate         float64
+	BurstAt, BurstFor time.Duration
 }
 
 // Window holds the counts for requests whose due time fell in one window.
@@ -61,6 +66,7 @@ type Result struct {
 	MaxScheduleLag time.Duration `json:"max_schedule_lag_ns"`
 	Warmup         *Window       `json:"warmup"`
 	Steady         *Window       `json:"steady"`
+	Burst          *Window       `json:"burst,omitempty"` // burst requests; also counted in Steady
 	DrainTime      time.Duration `json:"drain_ns"`
 }
 
@@ -81,13 +87,20 @@ func Run(ctx context.Context, clk Clock, cfg Config, pool []*collogs.ExportLogsS
 		return nil, fmt.Errorf("rate, duration, timeout must be > 0 and inflight >= 1")
 	}
 	reqRate := cfg.Rate / float64(perReq)
-	total := int((cfg.Warmup + cfg.Duration).Seconds() * reqRate)
+	sched := Schedule{Start: clk.Now(), Rate: reqRate}
+	res := &Result{RequestRate: reqRate, RecordsPerReq: perReq, Warmup: newWindow(), Steady: newWindow()}
+	if cfg.BurstRate > 0 {
+		if cfg.BurstFor <= 0 || cfg.BurstAt < cfg.Warmup || cfg.BurstAt+cfg.BurstFor > cfg.Warmup+cfg.Duration {
+			return nil, fmt.Errorf("burst [%v, %v) must lie inside the steady window [%v, %v)", cfg.BurstAt, cfg.BurstAt+cfg.BurstFor, cfg.Warmup, cfg.Warmup+cfg.Duration)
+		}
+		sched.Burst = &Burst{At: cfg.BurstAt, For: cfg.BurstFor, Rate: cfg.BurstRate / float64(perReq)}
+		res.Burst = newWindow()
+	}
+	total := sched.Requests(cfg.Warmup + cfg.Duration)
 	if total < 1 {
 		return nil, fmt.Errorf("run too short: %d requests at %.3f req/s", total, reqRate)
 	}
-
-	res := &Result{RequestRate: reqRate, RecordsPerReq: perReq, Warmup: newWindow(), Steady: newWindow()}
-	sched := Schedule{Start: clk.Now(), Rate: reqRate, Total: total}
+	sched.Total = total
 	res.Start = sched.Start
 	steadyFrom := sched.Start.Add(cfg.Warmup)
 
@@ -96,18 +109,26 @@ func Run(ctx context.Context, clk Clock, cfg Config, pool []*collogs.ExportLogsS
 		wg    sync.WaitGroup
 		slots = make(chan struct{}, cfg.Inflight)
 	)
-	window := func(due time.Time) *Window {
+	// windows: the request's window, plus the burst window if it fell due
+	// during the burst (burst requests count in Steady too: the verdict
+	// judges the whole steady window, burst included).
+	windows := func(due time.Time) []*Window {
 		if due.Before(steadyFrom) {
-			return res.Warmup
+			return []*Window{res.Warmup}
 		}
-		return res.Steady
+		if b := sched.Burst; b != nil && !due.Before(sched.Start.Add(b.At)) && due.Before(sched.Start.Add(b.At+b.For)) {
+			return []*Window{res.Steady, res.Burst}
+		}
+		return []*Window{res.Steady}
 	}
 
 	send := func(i int, due time.Time) {
-		w := window(due)
+		ws := windows(due)
 		mu.Lock()
-		w.Scheduled++
-		w.OfferedRecords += perReq
+		for _, w := range ws {
+			w.Scheduled++
+			w.OfferedRecords += perReq
+		}
 		mu.Unlock()
 
 		// Non-blocking acquire. Waiting for a slot would quietly turn the
@@ -117,7 +138,9 @@ func Run(ctx context.Context, clk Clock, cfg Config, pool []*collogs.ExportLogsS
 		case slots <- struct{}{}:
 		default:
 			mu.Lock()
-			w.Saturated++
+			for _, w := range ws {
+				w.Saturated++
+			}
 			mu.Unlock()
 			return
 		}
@@ -143,14 +166,16 @@ func Run(ctx context.Context, clk Clock, cfg Config, pool []*collogs.ExportLogsS
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			_ = w.Hist.RecordValue(us) // plain RecordValue: never the "corrected" form (§4)
-			if err != nil {
-				w.NonOK[codeOf(err)]++
-				return
+			for _, w := range ws {
+				_ = w.Hist.RecordValue(us) // plain RecordValue: never the "corrected" form (§4)
+				if err != nil {
+					w.NonOK[codeOf(err)]++
+					continue
+				}
+				w.OK++
+				w.RejectedRecords += rejected
+				w.IngestedRecords += perReq - rejected
 			}
-			w.OK++
-			w.RejectedRecords += rejected
-			w.IngestedRecords += perReq - rejected
 		}(pool[i%len(pool)])
 	}
 

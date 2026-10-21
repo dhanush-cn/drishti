@@ -25,20 +25,40 @@ type Verdict struct {
 
 // Summary is the steady-state headline of a run.
 type Summary struct {
-	OfferedRecordsPerSec  float64 `json:"offered_records_per_sec"`
-	AchievedRecordsPerSec float64 `json:"achieved_records_per_sec"` // ingested (acknowledged) records / steady duration
-	P50us                 int64   `json:"p50_us"`
-	P99us                 int64   `json:"p99_us"`
-	P999us                int64   `json:"p999_us"`
-	MaxUS                 int64   `json:"max_us"`
-	Samples               int64   `json:"latency_samples"`
+	OfferedRecordsPerSec  float64       `json:"offered_records_per_sec"`
+	AchievedRecordsPerSec float64       `json:"achieved_records_per_sec"` // ingested (acknowledged) records / steady duration
+	P50us                 int64         `json:"p50_us"`
+	P99us                 int64         `json:"p99_us"`
+	P999us                int64         `json:"p999_us"`
+	MaxUS                 int64         `json:"max_us"`
+	Samples               int64         `json:"latency_samples"`
+	Burst                 *BurstSummary `json:"burst,omitempty"`
+}
+
+// BurstSummary: the burst window on its own (its requests are also in the
+// steady window the verdict judges).
+type BurstSummary struct {
+	RecordsPerSec   float64          `json:"offered_records_per_sec"`
+	OfferedRecords  int64            `json:"offered_records"`
+	IngestedRecords int64            `json:"ingested_records"`
+	NonOK           map[string]int64 `json:"non_ok_by_code"`
+	Saturated       int64            `json:"saturated_requests"`
+	P50us           int64            `json:"p50_us"`
+	P99us           int64            `json:"p99_us"`
+	MaxUS           int64            `json:"max_us"`
 }
 
 // Summarize computes the steady-state summary. Percentiles come from the one
 // merged steady histogram, never from averaging per-interval percentiles.
 func Summarize(r *Result, cfg Config) Summary {
 	h := r.Steady.Hist
+	var burst *BurstSummary
+	if b := r.Burst; b != nil {
+		burst = &BurstSummary{RecordsPerSec: cfg.BurstRate, OfferedRecords: b.OfferedRecords, IngestedRecords: b.IngestedRecords,
+			NonOK: b.NonOK, Saturated: b.Saturated, P50us: b.Hist.ValueAtQuantile(50), P99us: b.Hist.ValueAtQuantile(99), MaxUS: b.Hist.Max()}
+	}
 	return Summary{
+		Burst:                 burst,
 		OfferedRecordsPerSec:  cfg.Rate,
 		AchievedRecordsPerSec: achieved(r, cfg),
 		P50us:                 h.ValueAtQuantile(50),

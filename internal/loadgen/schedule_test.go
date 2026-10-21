@@ -88,3 +88,42 @@ func TestSchedule_StopsOnCancel(t *testing.T) {
 		t.Fatalf("sent all %d after cancel", sent)
 	}
 }
+
+// The burst schedule is piecewise but continuous, and puts exactly
+// rate x duration requests in each piece.
+func TestSchedule_BurstIsPiecewiseAndContinuous(t *testing.T) {
+	start := time.Unix(0, 0)
+	s := Schedule{Start: start, Rate: 10, Burst: &Burst{At: 2 * time.Second, For: time.Second, Rate: 30}}
+	if n := s.Requests(5 * time.Second); n != 70 {
+		t.Fatalf("Requests(5s) = %d, want 20 + 30 + 20", n)
+	}
+	if n := s.Requests(2500 * time.Millisecond); n != 35 {
+		t.Fatalf("Requests(2.5s) = %d, want 20 + 15", n)
+	}
+	count := map[string]int{}
+	prev := start
+	for i := 0; i < 70; i++ {
+		d := s.Due(i)
+		if d.Before(prev) {
+			t.Fatalf("due(%d) = %v before due(%d)", i, d, i-1)
+		}
+		prev = d
+		switch off := d.Sub(start); {
+		case off < 2*time.Second:
+			count["before"]++
+		case off < 3*time.Second:
+			count["burst"]++
+		default:
+			count["after"]++
+		}
+	}
+	if count["before"] != 20 || count["burst"] != 30 || count["after"] != 20 {
+		t.Fatalf("requests per piece %v, want 20/30/20", count)
+	}
+	if got := s.Due(20); !got.Equal(start.Add(2 * time.Second)) {
+		t.Fatalf("first burst request due %v, want exactly the burst start", got)
+	}
+	if got := s.Due(50); !got.Equal(start.Add(3 * time.Second)) {
+		t.Fatalf("first request after the burst due %v, want exactly the burst end", got)
+	}
+}
