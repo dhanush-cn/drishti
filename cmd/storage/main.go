@@ -32,6 +32,7 @@ func main() {
 		maxBytes  = flag.Int("batch-bytes", envInt("DRISHTI_BATCH_BYTES", 32<<20), "flush a partition's batch at this many encoded bytes")
 		maxWait   = flag.Duration("batch-wait", envDur("DRISHTI_BATCH_WAIT", 2*time.Second), "flush a partition's batch this long after its first record (bounds event -> queryable at low traffic)")
 		insertTO  = flag.Duration("insert-timeout", envDur("DRISHTI_INSERT_TIMEOUT", 30*time.Second), "one insert attempt")
+		pending   = flag.Int("max-pending-bytes", envInt("DRISHTI_MAX_PENDING_BYTES", 192<<20), "encoded bytes handed to background inserts but not yet stored; above it the consumer stops polling (backpressure, bounds memory)")
 		pprofAddr = flag.String("pprof-addr", env("DRISHTI_PPROF_ADDR", ""), "serve /debug/pprof/ on this address; empty = off")
 	)
 	flag.Parse()
@@ -61,14 +62,15 @@ func main() {
 	}
 
 	c, err := storage.New(storage.Config{
-		Brokers:       strings.Split(*brokers, ","),
-		Topic:         *topic,
-		Group:         *group,
-		ResetLatest:   *reset == "latest",
-		Limits:        storage.Limits{MaxRows: *maxRows, MaxBytes: *maxBytes, MaxWait: *maxWait},
-		InsertTimeout: *insertTO,
-		CH:            ch,
-		Log:           log,
+		Brokers:         strings.Split(*brokers, ","),
+		Topic:           *topic,
+		Group:           *group,
+		ResetLatest:     *reset == "latest",
+		Limits:          storage.Limits{MaxRows: *maxRows, MaxBytes: *maxBytes, MaxWait: *maxWait},
+		InsertTimeout:   *insertTO,
+		MaxPendingBytes: *pending,
+		CH:              ch,
+		Log:             log,
 	})
 	if err != nil {
 		log.Error("storage consumer", "err", err)
@@ -78,7 +80,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	log.Info("storage consumer running", "topic", *topic, "group", *group, "table", *table,
-		"batch_rows", *maxRows, "batch_bytes", *maxBytes, "batch_wait", maxWait.String(), "reset", *reset)
+		"batch_rows", *maxRows, "batch_bytes", *maxBytes, "batch_wait", maxWait.String(), "reset", *reset,
+		"max_pending_bytes", *pending)
 	if err := c.Run(ctx); err != nil {
 		log.Error("stopped with error (uncommitted batches are re-read on restart)", "err", err)
 		os.Exit(1)

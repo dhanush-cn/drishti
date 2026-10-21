@@ -94,8 +94,10 @@ func TestRun_LoopLineAccountsForEveryMessage(t *testing.T) {
 		want += e.produce(p, "loop", count, per, ts)
 	}
 	var logs syncBuf
-	c := e.consumer(fast, nil)
-	c.cfg.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	// The logger goes in before New: franz-go starts group management
+	// inside New, so onAssigned can log before New returns (setting it
+	// afterwards was a data race, found by -race on a fresh-clone run).
+	c := e.consumerWith(fast, func(cfg *Config) { cfg.Log = slog.New(slog.NewJSONHandler(&logs, nil)) })
 	if err := e.runUntil(c, want, 20*time.Second); err != nil {
 		t.Fatal(err)
 	}

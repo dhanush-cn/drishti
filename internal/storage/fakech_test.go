@@ -26,6 +26,18 @@ type fakeCH struct {
 	failInserts int
 	lastQuery   map[string]string
 	srv         *httptest.Server
+
+	// Background-insert tests. gate runs before an insert is applied,
+	// outside mu, so it can block one insert while others proceed;
+	// failIf fails an insert with 500. tmu guards the tracking below.
+	gate        func(partition uint16, first uint64)
+	failIf      func(partition uint16, first uint64) bool
+	tmu         sync.Mutex
+	inflight    map[uint16]int
+	maxInflight map[uint16]int // per partition: must never exceed 1
+	allInflight int
+	maxAll      int
+	order       map[uint16][]uint64 // first offset of each applied insert, per partition
 }
 
 type fakeRow struct {
@@ -38,7 +50,7 @@ type fakeRow struct {
 }
 
 func newFakeCH(t *testing.T) *fakeCH {
-	f := &fakeCH{tokens: map[string]bool{}}
+	f := &fakeCH{tokens: map[string]bool{}, inflight: map[uint16]int{}, maxInflight: map[uint16]int{}, order: map[uint16][]uint64{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -51,6 +63,31 @@ func (f *fakeCH) ch() *CH {
 func (f *fakeCH) handle(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	q := r.URL.Query()
+	if strings.HasPrefix(q.Get("query"), "INSERT") {
+		if rows, err := decodeRows(body); err == nil && len(rows) > 0 {
+			p, first := rows[0].partition, rows[0].offset
+			f.tmu.Lock()
+			f.inflight[p]++
+			f.maxInflight[p] = max(f.maxInflight[p], f.inflight[p])
+			f.allInflight++
+			f.maxAll = max(f.maxAll, f.allInflight)
+			gate, failIf := f.gate, f.failIf
+			f.tmu.Unlock()
+			defer func() {
+				f.tmu.Lock()
+				f.inflight[p]--
+				f.allInflight--
+				f.tmu.Unlock()
+			}()
+			if gate != nil {
+				gate(p, first)
+			}
+			if failIf != nil && failIf(p, first) {
+				http.Error(w, "Code: 999. DB::Exception: injected for this batch", 500)
+				return
+			}
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastQuery = map[string]string{}
@@ -79,6 +116,11 @@ func (f *fakeCH) handle(w http.ResponseWriter, r *http.Request) {
 			f.tokens[tok] = true
 		}
 		f.rows = append(f.rows, rows...)
+		if len(rows) > 0 {
+			f.tmu.Lock()
+			f.order[rows[0].partition] = append(f.order[rows[0].partition], rows[0].offset)
+			f.tmu.Unlock()
+		}
 	case strings.Contains(string(body), "max(kafka_offset)"):
 		max := map[uint16]uint64{}
 		for _, r := range f.rows {

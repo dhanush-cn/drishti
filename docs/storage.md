@@ -3,14 +3,15 @@
 `cmd/storage` consumes `otlp.logs` (consumer group `drishti-storage`), flattens each OTLP log record into a row, and inserts batches into `drishti.logs` (`clickhouse/schema/001_logs.sql`). Every Kafka record lands in the table **exactly once**, without Kafka or ClickHouse transactions.
 
 ```
-otlp.logs (6 partitions) ──► poll ──► per-partition batch (RowBinary bytes) ──► HTTP INSERT ──► part
-                                                                                   │ 200 OK
-                                                     commit offset last+1  ◄───────┘
+otlp.logs (6 partitions) ──► poll ──► per-partition batch (RowBinary bytes) ──► queue ──► HTTP INSERT ──► part
+          ▲                                                       (one in flight per partition) │ 200 OK
+          └── loop keeps polling while inserts run          commit offset last+1  ◄────────────┘
 ```
 
 | File | Job |
 |---|---|
-| `internal/storage/consumer.go` | poll, batch, flush, commit, rebalance callbacks, resume |
+| `internal/storage/consumer.go` | poll, batch, background inserts, commit, rebalance callbacks, resume |
+| `internal/storage/loopstats.go` | the `loop` line: where each 10 s window went |
 | `internal/storage/batch.go` | one partition's batch; flush limits |
 | `internal/storage/rows.go` | OTLP → row (column order, timestamp fallbacks, attribute flattening) |
 | `internal/storage/rowbinary.go` | RowBinary encoding |
@@ -36,7 +37,7 @@ The receiver is at-least-once and Kafka consumers are at-least-once, so the stor
 
 Crash between 2 and 3 → the replayed records are already in the table → skipped. Crash before 2 → nothing stored, nothing committed → re-read. A failed commit costs nothing but a skipped replay.
 
-**Why the resume query is cheap:** an aggregate **projection** (`ingest_progress`: `max(kafka_offset) GROUP BY kafka_partition`) is stored inside every part, built atomically with it. `EXPLAIN` shows `ReadFromMergeTree (ingest_progress)`, 1 granule (checked on ClickHouse 26.9 via chdb; verify on 26.8 with the driver).
+**Why the resume query is cheap:** an aggregate **projection** (`ingest_progress`: `max(kafka_offset) GROUP BY kafka_partition`) is stored inside every part, built atomically with it. `EXPLAIN` shows `ReadFromMergeTree (ingest_progress)`: 1 granule on ClickHouse 26.9 (chdb), 17 granules for 17 parts on 26.8.21 with ~21M rows.
 
 **The token stays as a second layer:** it covers the one case the skip can't, an insert that timed out on our side but was written on the server, retried by the *same* process with identical bytes.
 
@@ -45,13 +46,14 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 **What would break it, stated so it can be checked:**
 - An insert split into several blocks. ClickHouse emits a new block at `min_insert_block_size_rows` (1,048,449) **or** `min_insert_block_size_bytes` (256 MiB). `Limits.Validate` keeps batches below both (rows < 1,048,449; bytes ≤ 200 MiB, one message of margin). The Week 2 driver checks `system.part_log` for any insert query that created more than one part.
 - `async_insert`. The server buffers and merges inserts, so "200 OK" no longer means "this part exists". Some 26.x builds default it **on** (chdb 26.9: `async_insert = 1`). Every insert sends `async_insert=0`.
-- Partitions moving between consumers mid-batch. `BlockRebalanceOnPoll`: a rebalance can only happen between loop iterations, after flush and commit. Revoke/lost callbacks drop unflushed batches; the next owner re-reads them.
+- Inserts of one partition landing out of order. Step 4 trusts `max(kafka_offset)`: if batch k+1 landed and batch k didn't, the resume would skip k's records forever. So each partition has **at most one insert in flight**, the next starts only after the previous one succeeded, and a batch that never stores drops its partition's queue (re-read after restart) instead of letting later batches past it (decision 6).
+- Partitions moving between consumers while an insert is in flight. `BlockRebalanceOnPoll` limits rebalances to between loop iterations, but background inserts may still be running then. The **revoke callback waits** for the revoked partitions' in-flight inserts, commits what they stored, and drops queued and open batches; the next owner reads `max(kafka_offset)` only after that. Without the wait, an insert landing after the new owner's read is stored twice (`TestRun_RevokeWaitsForInFlightInsert` shows exactly that when the wait is removed). `OnPartitionsLost` (session already expired) waits the same way but can't commit.
 
 ### 2. Batching: per Kafka partition, cut by rows, bytes, age, or day
 
 - **Limits:** 100,000 rows **or** 32 MiB encoded **or** 2 s after the batch's first record, whichever comes first (`-batch-rows`, `-batch-bytes`, `-batch-wait`). A message is never split: the row cut happens before a message that would cross the limit.
 - **The trade-off (lab §7):** ClickHouse wants few, large inserts; freshness wants small, frequent ones. At 175k records/s over 6 partitions (~29k/s each) a partition fills 100k rows in ~3.4 s, so the **2 s age cut decides**: about 6 inserts per 2 s (~3 inserts/s) of ~58k rows. At low traffic the age cut bounds event → queryable to ~2 s + insert time. The live dashboard reads Redis (Week 4), not ClickHouse, for sub-second freshness.
-- Due batches are inserted **concurrently** (at most one per partition at a time) and committed together.
+- Due batches go to their partition's insert queue; inserts of different partitions run concurrently, one per partition at a time (decision 6).
 
 ### 3. HTTP + RowBinary, not the native protocol client
 
@@ -78,9 +80,26 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 | Failure | Behaviour |
 |---|---|
 | ClickHouse down / insert error | Same batch retried with the same token, backoff 100 ms → 5 s, forever. Offsets aren't committed, so Kafka holds the backlog (24 h retention). Consumer lag grows; nothing is dropped |
-| Shutdown mid-insert | The in-flight attempt is not cancelled (`WithoutCancel` + insert timeout): cancelling it would turn a clean stop into an "was it written?" case. Shutdown stops retries only, then commits what succeeded |
+| Shutdown mid-insert | The in-flight attempt is not cancelled (`WithoutCancel` + insert timeout): cancelling it would turn a clean stop into an "was it written?" case. Shutdown cuts every open batch, gives each queued batch its attempt, stops retries only, then commits what succeeded |
+| ClickHouse slower than Kafka | Pending bytes reach `-max-pending-bytes`; the loop stops polling until inserts catch up (`flush_pct` in the `loop` line). Memory stays bounded, lag grows in Kafka |
 | Undecodable Kafka message | Logged with partition/offset, counted (`decode_errors`), skipped. Retrying would wedge the partition forever |
 | Consumer killed (`kill -9`) | Partitions move after the group session timeout (~45 s by default, seen locally); replay is skipped by stored offset. **Week 3:** shorter session timeout or static membership |
+
+### 6. Background inserts (Week 3, patch 17)
+
+**Why:** patch 16's `loop` line showed the ~70k rows/s ceiling exactly: the loop never waited for Kafka (`poll_pct` 0), and its time split ~50/50 between decode + encode (~7.4 µs/row on one goroutine) and **standing still while ClickHouse wrote** (~150 ms per iteration). Two equal halves that never overlapped: ~21k rows per ~305 ms iteration ≈ 68k rows/s.
+
+**What changed:** the loop hands each cut batch to its partition's queue and goes straight back to polling. Each partition runs at most one insert at a time, in offset order; when one succeeds, its last record is noted for commit and the next queued batch starts. The loop commits everything stored since the last iteration (between `PollFetches` and `AllowRebalance`, as before).
+
+| Rule | Why |
+|---|---|
+| One insert in flight per partition, in offset order | the resume trusts `max(kafka_offset)` (decision 1) |
+| A batch that never stores drops its partition's queue and stops `Run` | nothing later may land past it; the dropped batches were never committed, so they are re-read |
+| Revoke waits for in-flight inserts, then commits them | the next owner must read the table after they land |
+| `-max-pending-bytes` (192 MiB): past it the loop stops polling until inserts catch up | backpressure: if ClickHouse is slower than Kafka, lag grows in Kafka (24 h retention), not in memory |
+| Commits stay in the loop or the revoke callback | they never overlap, and per partition they only move forward |
+
+**Expected:** iteration time ≈ add time only, so the ceiling moves to what one goroutine can decode and encode (≈ 1/7.4 µs ≈ 135k rows/s), minus CPU taken by the receiver and generator on the same laptop. `flush_pct` should fall to ~0 and `add_pct` rise towards 100. If ClickHouse can't keep up instead, `flush_pct` comes back as backpressure, and lag shows it.
 
 ## Run
 
@@ -97,6 +116,7 @@ A new consumer group starts at the **end** of `otlp.logs` here (`DRISHTI_STORAGE
 ## Verified
 
 - `go test -race`: every record once across 6 partitions; **crash between insert and commit leaves no duplicates** (replay cut into different batches, so only the stored-offset skip can save it); failed inserts retried; day and row cuts; refusal on stored offsets beyond the topic end; Limits; attribute rendering; SQL quoting. Crash test run 30x with `-race`: stable after the shutdown fix below.
+- Background inserts (patch 17): the loop polls and stores other partitions while one insert is stuck; one insert per partition, in offset order, while partitions overlap; a batch that never stores holds back its partition only; backpressure stops polling at the pending budget; a rebalance during an in-flight insert stores nothing twice (two consumers in one group). Crash/retry/every-record tests 30x and the rebalance test 10x with `-race`: stable.
 - **End to end, cloud VM** (in-memory Kafka + ClickHouse 26.9 engine behind a small HTTP shim; not benchmark numbers): loadgen 10k rec/s, 22 s → 219,648 rows = ingested records, 429 seqs, none short or long, **including a `kill -9` of the consumer mid-run and a restart**. That kill landed after a commit, so `skipped_replayed` was 0; the unit test covers the gap deterministically.
 - Bugs found on the way: a **data race** (`-race`, only when applying the patches to a fresh clone): `kgo.NewClient` starts group management at once, so `onAssigned` could run before `New` had stored the admin client; it now uses the client the callback is handed. `Close` hung in `LeaveGroup` (with `BlockRebalanceOnPoll` you must `AllowRebalance` first); a shutdown mid-insert returned `context canceled` (now the in-flight attempt completes); the startup check quoted the table with Go's `"…"`, which ClickHouse reads as an identifier (`UNKNOWN_IDENTIFIER`), found only end to end.
 
@@ -121,6 +141,22 @@ ClickHouse 26.8.21. Generator with `-stamp` (timestamps = send time, `drishti.lo
 - **Kill test (50k, `kill -9` at ~27 s, restart 5 s later):** 3.50M rows = every acked record, 0 short, 0 long. The replacement inserted nothing for ~47 s (the dead member's session timeout), then caught up 30 s after the generator stopped; event → queryable p50 28 s for that run. `skipped_replayed` was 0 again: no kill so far has landed between an insert and its commit, so the live replay-skip path is still only covered by the unit test. Week 3: session timeout / static membership, and a kill timed inside an insert.
 - **Compression on this synthetic data** (21M rows, 2.59 GiB on disk, ~132 B/row): `body` 2.7x and `log_attributes` 3.7x (the generator pads bodies and fills attributes with random hex, which doesn't compress); `resource_attributes` 32x, timestamps 420–540x, LowCardinality columns 150–180x. Real OTLP from the demo will differ; measure it before tuning codecs.
 
+## Measured, 21 Oct (laptop, internal, patch 16, 3 runs per rate)
+
+Same setup as 20 Oct, serial loop (before patch 17), `loop` line on. Raw data: `Downloads/drishti-week3/results/loop/`.
+
+| rec/s | loss / dup | queryable p50 / p99 | poll % | add % | flush % | msgs / poll | KiB per partition-fetch (cap 1024) | consumer cores |
+|---|---|---|---|---|---|---|---|---|
+| 50k ×3 | 0 / 0 each | 1.37–1.41 s / 2.66–2.78 s | 39–46 | 34–36 | 19–25 | 1.4–1.6 | 159–168 | 0.42 |
+| 100k ×3 | 0 / 0 each | 4.0–7.1 s / 40.7–44.0 s | 0 | 47–51 | 48–50 | 33–35 | 784–808 | 0.55 |
+| 150k ×3 | 0 / 0 each | 36–40 s / 81–88 s | 0 | 50–52 | 47–49 | 34–42 | 887–898 | 0.57–0.63 |
+
+- **Ceiling explained.** At 100k and 150k the loop never waited for Kafka: the buffered fetch was always ready (`poll_pct` 0). Its time split evenly between **decode + encode** and **waiting for the insert**. Over 22 steady windows (all 6 partitions per poll): add ≈ **7.4 µs/row** (6.2–8.9), ~21k rows per poll, ~150 ms per iteration waiting for inserts (0.67 inserts/iteration × ~230 ms). 155 ms + 150 ms per 21k rows ≈ **68k rows/s**, the measured ceiling (7.0M rows in 101 s at 100k, 10.5M in 155 s at 150k).
+- **The fetch limit was not the cause.** Fetches came back full (~800–900 KiB of 1024: the next whole batch didn't fit), but always before the loop asked for them. Raising `FetchMaxPartitionBytes` alone wouldn't help.
+- **Insert time barely depends on rows** (~240 ms at ~20k rows per insert, ~230 ms at ~33k): per-insert overhead dominates at these sizes. At 50k, due batches of ~3 partitions were inserted together (one wait for three inserts); at the ceiling they staggered, one wait per insert.
+- **My prediction before the run was wrong:** I expected poll + flush to dominate; it was add + flush. The reading table below lacked that row; it has it now.
+- Fix: decision 6 (background inserts).
+
 ## Reading the loop line (Week 3 instrumentation)
 
 The ~70k rows/s ceiling came with idle CPU, so the question is where the loop spends its time. `Run` is serial: **poll → add (decode + RowBinary encode) → flush (wait for every due insert) → commit**, then poll again. Every 10 s the consumer logs a `loop` line covering only that window (`internal/storage/loopstats.go`), next to the cumulative `stats` line. At startup it logs `fetch limits` (the client's real `FetchMaxBytes`, `FetchMaxPartitionBytes`, `MaxConcurrentFetches`, `poll_wait`).
@@ -144,7 +180,9 @@ How to read it at the ceiling (100k and 150k offered, consumer behind):
 | `flush_pct` high, `kib_per_part_fetch` near `cap_kib` | the loop stands still during inserts, and each iteration only brings in one capped fetch | pipeline inserts (keep polling and encoding while the previous batch is written, commit in offset order) **and** raise `FetchMaxPartitionBytes` |
 | `poll_pct` high, `kib_per_part_fetch` near `cap_kib` | waiting on the fetch round trip, a full 1 MiB per partition each time: the fetch size is the limit | raise `FetchMaxPartitionBytes` first |
 | `poll_pct` high, fetches well under `cap_kib` | Kafka has less to give than we can take; check that lag is actually growing | look at the receiver / broker, not the consumer |
+| `poll_pct` ~0, `add_pct` and `flush_pct` ~50 each (**measured 21 Oct**) | serial loop: decode + encode and the insert wait take turns, nothing overlaps | background inserts (decision 6) |
 | `add_pct` high (consumer near 1 core) | decode + encode on one goroutine is the limit | parallelise decode per partition, profile `AppendLogs` |
+| `flush_pct` high after patch 17 | backpressure: pending bytes at `-max-pending-bytes`, ClickHouse slower than the loop | ClickHouse side: insert size, concurrency, parts/merges |
 
 The instrumentation reads clocks four times per iteration and does not change behaviour. Every iteration is counted, empty polls included.
 
@@ -160,3 +198,8 @@ The instrumentation reads clocks four times per iteration and does not change be
 | Fetch hook | drop `kgo.WithHooks(&c.fetch)` from `New` | `TestRun_LoopLineAccountsForEveryMessage`: `kib_per_part_fetch never > 0` (verified) |
 | Message count per poll | stop adding `n` to `it.msgs` | same test: `counted 0 messages, want 21` (verified) |
 | Window observe | drop `c.window.observe(it)` from `Run` | same test: 0 messages, no flush counted (verified) |
+| Background inserts | make the loop wait for every insert each iteration (`if true { waitFor(allIdle) }`) | `TestRun_PollsAndInsertsWhileAnotherInsertIsInFlight`: `timed out ... waiting for p1 rows stored while p0's insert is in flight` (verified) |
+| One insert per partition | drop the `busy` check from `startNext` and `enqueue` | `TestRun_OneInsertPerPartitionInOffsetOrder`: `partition 0 had 15 inserts in flight at once` (verified) |
+| Failed batch holds back its partition | on final failure, start the next queued batch instead of dropping the queue | `TestRun_FailingBatchHoldsBackItsPartitionOnly`: `partition 0 stored 10 rows behind a failed batch` (verified) |
+| Backpressure | make the pending-budget wait always true | `TestRun_StopsPollingAtPendingBudget`: `loop read 70 records while 16350 bytes were pending` (verified) |
+| Revoke waits for in-flight inserts | delete the `for ps.busy { idle.Wait() }` loop in `release` | `TestRun_RevokeWaitsForInFlightInsert`: every row of the revoked partition stored twice (verified) |

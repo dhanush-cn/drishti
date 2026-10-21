@@ -11,14 +11,16 @@ import (
 //
 // The question it answers: at the ~70k rows/s ceiling, where does one
 // iteration of Run spend its wall time, and how much does one poll bring?
-// Run is serial (poll → add → flush → commit), so the four phase times of
+// The loop runs poll → add → wait → commit, with inserts in the background
+// (before patch 17 the wait was the whole insert). The four phase times of
 // a window add up to (almost) its wall time, and their shares say which
 // phase is the limit:
 //
 //   - poll high, polls full: waiting for the next fetch round trip; the
 //     fetch size (FetchMaxPartitionBytes) bounds each iteration.
-//   - flush high: the loop stands still while ClickHouse writes; inserts
-//     need pipelining.
+//   - flush high: the loop stands still waiting for inserts: since
+//     background inserts, only at the pending-bytes budget (ClickHouse
+//     slower than Kafka) or at shutdown.
 //   - add high: decode + RowBinary encode on one goroutine is the limit
 //     (it would also show as ~1 core of consumer CPU).
 //
@@ -29,10 +31,10 @@ import (
 type iteration struct {
 	msgs    int // Kafka records (one OTLP resource each) returned by the poll
 	parts   int // partitions with at least one record in the poll
-	batches int // batches flushed by this iteration
+	batches int // batches handed to inserts by this iteration
 	poll    time.Duration
 	add     time.Duration // add for every record + takeReady, under mu
-	flush   time.Duration
+	flush   time.Duration // waiting for inserts (backpressure or shutdown)
 	commit  time.Duration
 }
 

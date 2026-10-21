@@ -45,8 +45,9 @@ services:
       DRISHTI_PPROF_ADDR: ":6060"
     ports:
       - "127.0.0.1:16061:6060"
-    # Six partitions x up to 32 MiB batch + one decoded message each, plus
-    # in-flight HTTP bodies: ~200-400 MiB at full batches.
+    # Six open batches (up to 32 MiB each) + up to 192 MiB handed to
+    # background inserts (-max-pending-bytes) + one decoded message each:
+    # ~400 MiB at the worst case, under GOMEMLIMIT 600MiB.
     mem_limit: 768m
     networks:
       default: {}

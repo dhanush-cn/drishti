@@ -15,6 +15,13 @@
 //
 // A retried insert after an ambiguous failure (timeout: written or not?)
 // re-sends the identical batch with the same insert_deduplication_token.
+//
+// Inserts run in the background, overlapped with polling and encoding
+// (docs/storage.md, "Background inserts"). Step 4 adds one rule for that:
+// per partition, inserts land in offset order, and an insert starts only
+// after the previous one for that partition succeeded. A later batch landing
+// before an earlier one failed would raise max(kafka_offset) past records
+// that are not stored, and the resume would skip them: loss.
 package storage
 
 import (
@@ -22,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,9 +51,14 @@ type Config struct {
 	ResetLatest   bool
 	Limits        Limits
 	InsertTimeout time.Duration // one HTTP insert attempt
-	PollWait      time.Duration // max wait in one poll, so age-based flushes fire on idle partitions
-	CH            *CH
-	Log           *slog.Logger
+	// MaxPendingBytes bounds encoded batches handed to inserts but not yet
+	// stored (in flight + queued behind an in-flight insert of the same
+	// partition). Above it the loop stops polling until inserts catch up:
+	// that is the backpressure, and it bounds memory.
+	MaxPendingBytes int
+	PollWait        time.Duration // max wait in one poll, so age-based flushes fire on idle partitions
+	CH              *CH
+	Log             *slog.Logger
 
 	// crashAfterInsert (tests only): when it returns true after an insert
 	// succeeded, Run returns errCrash before committing, as if the process
@@ -74,10 +87,27 @@ type Consumer struct {
 
 	mu      sync.Mutex
 	open    map[int32]*batch // being filled
-	ready   []*batch         // full or due, to flush this iteration
+	ready   []*batch         // full or due, to hand to an insert this iteration
 	skip    map[int32]int64  // records at or below this offset are already stored
-	fatal   error            // set by a callback; Run returns it
+	fatal   error            // set by a callback or an insert; Run returns it
 	reqPool collogs.ExportLogsServiceRequest
+
+	// Background inserts, all under mu. idle is signalled whenever an insert
+	// finishes, so waiters (backpressure, revoke, shutdown) re-check.
+	parts   map[int32]*partState
+	pending int                   // bytes of in-flight + queued batches
+	stored  map[int32]*kgo.Record // stored but not yet committed: last record per partition
+	dead    bool                  // simulated crash: no further commits or inserts
+	idle    *sync.Cond
+	inserts sync.WaitGroup
+}
+
+// partState is one partition's insert pipeline: at most one insert in
+// flight, later batches queued in offset order behind it.
+type partState struct {
+	busy     bool
+	queue    []*batch
+	revoking bool // revoke/lost in progress: start nothing new
 }
 
 func New(cfg Config) (*Consumer, error) {
@@ -93,7 +123,15 @@ func New(cfg Config) (*Consumer, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	c := &Consumer{cfg: cfg, open: map[int32]*batch{}, skip: map[int32]int64{}}
+	if cfg.MaxPendingBytes <= 0 {
+		cfg.MaxPendingBytes = 192 << 20
+	}
+	if cfg.MaxPendingBytes < cfg.Limits.MaxBytes {
+		return nil, fmt.Errorf("max pending bytes %d is below one batch (%d): the loop could never hand a full batch to an insert", cfg.MaxPendingBytes, cfg.Limits.MaxBytes)
+	}
+	c := &Consumer{cfg: cfg, open: map[int32]*batch{}, skip: map[int32]int64{},
+		parts: map[int32]*partState{}, stored: map[int32]*kgo.Record{}}
+	c.idle = sync.NewCond(&c.mu)
 	reset := kgo.NewOffset().AtStart()
 	if cfg.ResetLatest {
 		reset = kgo.NewOffset().AtEnd()
@@ -106,13 +144,15 @@ func New(cfg Config) (*Consumer, error) {
 		kgo.ConsumeResetOffset(reset),
 		// Offsets are committed by hand, after the insert (step 3).
 		kgo.DisableAutoCommit(),
-		// A rebalance may only happen between loop iterations, when every
-		// batch that will be committed has been flushed and committed. The
-		// callbacks below then only have to drop unflushed state.
+		// A rebalance may only happen between loop iterations. Inserts may
+		// still be in flight then, so the revoke callback waits for the
+		// revoked partitions' inserts and commits them before letting go:
+		// the next owner reads max(kafka_offset) from the table, and an
+		// insert landing after that read would be stored twice.
 		kgo.BlockRebalanceOnPoll(),
 		kgo.OnPartitionsAssigned(c.onAssigned),
 		kgo.OnPartitionsRevoked(c.onRevoked),
-		kgo.OnPartitionsLost(c.onRevoked),
+		kgo.OnPartitionsLost(c.onLost),
 		kgo.WithHooks(&c.fetch),
 	)
 	if err != nil {
@@ -176,16 +216,56 @@ func (c *Consumer) onAssigned(ctx context.Context, cl *kgo.Client, assigned map[
 	c.cfg.Log.Info("partitions assigned", "partitions", parts, "stored_max_offsets", prog)
 }
 
-// onRevoked drops unflushed batches: they were never committed, so the
-// partition's next owner re-reads them from the committed offset.
-func (c *Consumer) onRevoked(_ context.Context, _ *kgo.Client, revoked map[string][]int32) {
+// onRevoked hands partitions over cleanly: it waits for their in-flight
+// inserts, commits what is stored, and drops queued and open batches. Those
+// were never inserted or committed, so the next owner re-reads them.
+func (c *Consumer) onRevoked(ctx context.Context, cl *kgo.Client, revoked map[string][]int32) {
+	parts := revoked[c.cfg.Topic]
+	last := c.release(parts)
+	if len(last) > 0 {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		if err := cl.CommitRecords(cctx, last...); err != nil {
+			c.cfg.Log.Warn("commit on revoke failed (rows are stored; replay will be skipped)", "err", err)
+		}
+		cancel()
+	}
+	c.cfg.Log.Info("partitions revoked", "partitions", parts)
+}
+
+// onLost: the group already moved the partitions (session expired), so a
+// commit would be refused. Waiting for in-flight inserts still narrows the
+// window in which one lands after the new owner read the table.
+func (c *Consumer) onLost(_ context.Context, _ *kgo.Client, lost map[string][]int32) {
+	c.release(lost[c.cfg.Topic])
+	c.cfg.Log.Warn("partitions lost", "partitions", lost[c.cfg.Topic])
+}
+
+// release stops the pipelines of parts, waits for their in-flight inserts,
+// drops their unstored state and returns the stored, uncommitted records.
+func (c *Consumer) release(parts []int32) []*kgo.Record {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, p := range revoked[c.cfg.Topic] {
+	var last []*kgo.Record
+	for _, p := range parts {
+		if ps := c.parts[p]; ps != nil {
+			ps.revoking = true
+			for ps.busy {
+				c.idle.Wait()
+			}
+			for _, b := range ps.queue {
+				c.pending -= len(b.buf.b)
+			}
+			delete(c.parts, p)
+		}
+		if r := c.stored[p]; r != nil {
+			last = append(last, r)
+			delete(c.stored, p)
+		}
 		delete(c.open, p)
 		delete(c.skip, p)
 	}
-	c.cfg.Log.Info("partitions revoked", "partitions", revoked[c.cfg.Topic])
+	c.ready = slices.DeleteFunc(c.ready, func(b *batch) bool { return slices.Contains(parts, b.partition) })
+	return last
 }
 
 // add appends one Kafka record to its partition's batch. Called with mu held.
@@ -245,66 +325,146 @@ func (c *Consumer) takeReady(now time.Time, all bool) []*batch {
 	return out
 }
 
-// flush inserts batches concurrently (one per partition at most per
-// iteration in steady state), each retried with backoff until it succeeds
-// or ctx ends. Retries resend identical bytes with the same token.
+// enqueue hands batches to their partitions' pipelines, in the order they
+// were cut (offset order within a partition). Called with mu held.
+func (c *Consumer) enqueue(ctx context.Context, bs []*batch) {
+	for _, b := range bs {
+		ps := c.parts[b.partition]
+		if ps == nil {
+			ps = &partState{}
+			c.parts[b.partition] = ps
+		}
+		c.pending += len(b.buf.b)
+		ps.queue = append(ps.queue, b)
+		if !ps.busy {
+			c.startNext(ctx, ps)
+		}
+	}
+}
+
+// startNext starts the insert of ps's oldest queued batch. Called with mu
+// held; the insert itself runs without it.
+func (c *Consumer) startNext(ctx context.Context, ps *partState) {
+	if ps.busy || ps.revoking || c.dead || len(ps.queue) == 0 {
+		return
+	}
+	b := ps.queue[0]
+	ps.queue = ps.queue[1:]
+	ps.busy = true
+	c.inserts.Add(1)
+	go c.insert(ctx, ps, b)
+}
+
+// insert writes one batch, retrying with backoff until it succeeds or ctx
+// ends. Retries resend identical bytes with the same token.
 //
 // An attempt already in flight is never cancelled by ctx (it runs under
 // WithoutCancel plus InsertTimeout): cancelling it would turn a clean
 // shutdown into an ambiguous insert (written or not?) for no gain. ctx only
 // stops further retries. Found by running the crash test 20x: a shutdown
 // that landed mid-insert returned "flush: context canceled".
-func (c *Consumer) flush(ctx context.Context, bs []*batch) error {
-	errs := make([]error, len(bs))
-	var wg sync.WaitGroup
-	for i, b := range bs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for attempt := 0; ; attempt++ {
-				ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.cfg.InsertTimeout)
-				start := time.Now()
-				err := c.cfg.CH.Insert(ictx, b.token(), b.buf.b)
-				cancel()
-				if err == nil {
-					c.Stats.Inserts.Add(1)
-					c.Stats.Rows.Add(int64(b.rows))
-					c.Stats.InsertBytes.Add(int64(len(b.buf.b)))
-					c.Stats.InsertNanos.Add(int64(time.Since(start)))
-					return
-				}
-				c.Stats.InsertRetries.Add(1)
-				c.cfg.Log.Warn("insert failed; retrying same batch", "token", b.token(), "rows", b.rows, "attempt", attempt, "err", err)
-				select {
-				case <-ctx.Done():
-					errs[i] = ctx.Err()
-					return
-				case <-time.After(backoff(attempt)):
-				}
-			}
-		}()
+//
+// On success the next queued batch of the same partition starts; on final
+// failure the partition's queue is dropped (never inserted out of order) and
+// the error stops Run.
+func (c *Consumer) insert(ctx context.Context, ps *partState, b *batch) {
+	defer c.inserts.Done()
+	var err error
+	for attempt := 0; ; attempt++ {
+		ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.cfg.InsertTimeout)
+		start := time.Now()
+		err = c.cfg.CH.Insert(ictx, b.token(), b.buf.b)
+		cancel()
+		if err == nil {
+			c.Stats.Inserts.Add(1)
+			c.Stats.Rows.Add(int64(b.rows))
+			c.Stats.InsertBytes.Add(int64(len(b.buf.b)))
+			c.Stats.InsertNanos.Add(int64(time.Since(start)))
+			break
+		}
+		c.Stats.InsertRetries.Add(1)
+		c.cfg.Log.Warn("insert failed; retrying same batch", "token", b.token(), "rows", b.rows, "attempt", attempt, "err", err)
+		select {
+		case <-ctx.Done():
+			err = fmt.Errorf("insert %s: %w", b.token(), ctx.Err())
+		case <-time.After(backoff(attempt)):
+			continue
+		}
+		break
 	}
-	wg.Wait()
-	return errors.Join(errs...)
-}
 
-// commit commits offset last+1 for each flushed batch's partition. A failed
-// commit is not data loss: the rows are stored, and step 4 skips them when
-// they are replayed.
-func (c *Consumer) commit(ctx context.Context, bs []*batch) {
-	if len(bs) == 0 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	defer c.idle.Broadcast()
+	ps.busy = false
+	c.pending -= len(b.buf.b)
+	if err == nil && c.cfg.crashAfterInsert != nil && c.cfg.crashAfterInsert() {
+		err = errCrash
+	}
+	if c.dead {
 		return
 	}
-	lasts := make([]*kgo.Record, len(bs))
-	for i, b := range bs {
-		lasts[i] = b.last
+	if err != nil {
+		// Nothing after this batch may land before it: drop the queue (not
+		// committed, so re-read after restart) and stop.
+		for _, q := range ps.queue {
+			c.pending -= len(q.buf.b)
+		}
+		ps.queue = nil
+		if err == errCrash {
+			c.dead = true // as if the process died here: no more inserts or commits
+		}
+		if c.fatal == nil {
+			c.fatal = err
+		}
+		return
 	}
-	if err := c.cl.CommitRecords(ctx, lasts...); err != nil {
+	c.stored[b.partition] = b.last
+	c.startNext(ctx, ps)
+}
+
+// waitFor blocks (mu held) until cond is true or Run must stop.
+func (c *Consumer) waitFor(cond func() bool) {
+	for !cond() && c.fatal == nil {
+		c.idle.Wait()
+	}
+}
+
+func (c *Consumer) allIdle() bool {
+	for _, ps := range c.parts {
+		if ps.busy || len(ps.queue) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// commitStored commits offset last+1 for every partition whose inserts
+// stored something since the last commit. A failed commit is not data
+// loss: the rows are stored, and step 4 skips them when they are replayed.
+//
+// Only Run calls it, between PollFetches and AllowRebalance, so it never
+// overlaps a revoke callback (which commits its own partitions).
+func (c *Consumer) commitStored(ctx context.Context) {
+	c.mu.Lock()
+	if c.dead || len(c.stored) == 0 {
+		c.mu.Unlock()
+		return
+	}
+	last := make([]*kgo.Record, 0, len(c.stored))
+	for p, r := range c.stored {
+		last = append(last, r)
+		delete(c.stored, p)
+	}
+	c.mu.Unlock()
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := c.cl.CommitRecords(cctx, last...); err != nil {
 		c.cfg.Log.Warn("offset commit failed (rows are stored; replay will be skipped)", "err", err)
 	}
 }
 
-// Run consumes until ctx ends, then flushes and commits what it holds.
+// Run consumes until ctx ends, then inserts and commits what it holds.
 func (c *Consumer) Run(ctx context.Context) error {
 	defer func() {
 		// Leaving the group is itself a rebalance, so with
@@ -319,7 +479,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		"fetch_max_bytes", c.cl.OptValue(kgo.FetchMaxBytes),
 		"fetch_max_partition_bytes", c.cl.OptValue(kgo.FetchMaxPartitionBytes),
 		"max_concurrent_fetches", c.cl.OptValue(kgo.MaxConcurrentFetches),
-		"poll_wait", c.cfg.PollWait.String())
+		"poll_wait", c.cfg.PollWait.String(), "max_pending_bytes", c.cfg.MaxPendingBytes)
 	c.window = loopWindow{start: time.Now()}
 	for {
 		var it iteration
@@ -336,10 +496,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 		})
 
 		c.mu.Lock()
-		if c.fatal != nil {
-			err := c.fatal
+		if err := c.fatal; err != nil {
 			c.mu.Unlock()
-			return err
+			return c.stop(err)
 		}
 		fs.EachPartition(func(p kgo.FetchTopicPartition) {
 			if n := len(p.Records); n > 0 {
@@ -350,30 +509,28 @@ func (c *Consumer) Run(ctx context.Context) error {
 		fs.EachRecord(c.add)
 		stopping := ctx.Err() != nil
 		bs := c.takeReady(time.Now(), stopping)
-		c.mu.Unlock()
+		c.enqueue(ctx, bs)
 		t2 := time.Now()
 		it.add = t2.Sub(t1)
 		it.batches = len(bs)
 
-		// While running, a failing insert retries until ctx ends. When
-		// stopping, ctx is already done, so the final flush gets one
-		// attempt per batch (plus the in-flight rule in flush).
-		err := c.flush(ctx, bs)
+		// Backpressure: past the pending budget, stop polling until inserts
+		// catch up. When stopping, wait for everything (each queued batch
+		// gets its attempt; ctx only stops retries).
+		if stopping {
+			c.waitFor(c.allIdle)
+		} else {
+			c.waitFor(func() bool { return c.pending <= c.cfg.MaxPendingBytes })
+		}
+		err := c.fatal
+		c.mu.Unlock()
 		t3 := time.Now()
 		it.flush = t3.Sub(t2)
 		if err != nil {
-			// Not committed, so not lost: the next owner re-reads them.
-			return fmt.Errorf("flush: %w", err)
+			return c.stop(err)
 		}
-		if c.cfg.crashAfterInsert != nil && len(bs) > 0 && c.cfg.crashAfterInsert() {
-			return errCrash
-		}
-		// The commit must happen even if ctx was cancelled during the
-		// flush; skipping it would only cost a skipped replay, but there
-		// is no reason to.
-		cctx, cancelC := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		c.commit(cctx, bs)
-		cancelC()
+
+		c.commitStored(ctx)
 		it.commit = time.Since(t3)
 		c.window.observe(it)
 		if stopping {
@@ -387,6 +544,23 @@ func (c *Consumer) Run(ctx context.Context) error {
 		default:
 		}
 	}
+}
+
+// stop ends Run on an error: no new inserts start, the in-flight ones
+// finish (stopping them mid-request would make them ambiguous), and what
+// they stored is committed unless this is the simulated crash.
+func (c *Consumer) stop(err error) error {
+	c.mu.Lock()
+	for _, ps := range c.parts {
+		ps.revoking = true
+	}
+	c.mu.Unlock()
+	c.inserts.Wait()
+	c.commitStored(context.Background())
+	if err == errCrash {
+		return err
+	}
+	return fmt.Errorf("insert: %w", err)
 }
 
 func (c *Consumer) logStats() {
