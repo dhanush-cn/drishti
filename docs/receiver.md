@@ -139,11 +139,20 @@ About 40% is codec work (gunzip + lz4) and about a third is decoding and re-enco
 2. **Faster gzip decoding**: a buffered reader in front of flate, or klauspost's decoder (already a dependency).
 3. **Kafka compression**: lz4 vs none vs zstd, with broker disk and network in the comparison.
 
+## Week 3 changes (each measured on the laptop by `week3b.sh`, not assumed)
+
+### 5. gzip decoding: bulk copy, then klauspost (patch 19)
+
+`internal/otlpgrpc/gzip.go` registers its own `"gzip"` compressor in place of grpc-go's. The old path ran the standard library's inflater over gRPC's `mem.Reader`, one interface `ReadByte` call per byte (the 9.7% in the profile). The new one copies the compressed message (tens of KiB) into a pooled buffer in one go, then inflates from a `*bytes.Reader` with klauspost/compress, whose inflater has a specialised loop for that concrete type. gRPC's limits are unchanged: compressed size is checked against `-max-recv-bytes` before `Decompress`, and decompressed reads are capped at the same limit + 1.
+
+- Cloud VM microbenchmark (`BenchmarkDecompress`, one 512-record request with random-hex bodies; relative only): stdlib over `mem.Reader` ~3.3–3.7 ms, gzipCodec ~1.6–1.8 ms per request, 27 → 12 allocations. The laptop question is what share of receiver CPU it removes at 150k.
+- Wire behaviour is unchanged: stdlib-written gzip reads back, ours reads in stdlib (`TestGzipRoundTrip`), and the collector-path test still passes.
+
 ## Revert-proofs (break → red → revert → green)
 
 | Mechanism | Break it | Expected failure |
 |---|---|---|
-| gzip support | delete the `encoding/gzip` import in `internal/otlpgrpc/server.go` | `TestExport_GzipFromCollectorIsAccepted` |
+| gzip support | register `gzipCodec` under another name (`Name()` returns `"gzip-k"`) | `TestGzipCompressorIsOurs`: `registered gzip compressor is <nil>` (verified); `TestExport_GzipFromCollectorIsAccepted` |
 | Retryable mapping | in `toStatus`, return `codes.Internal` for `ErrPublish` | `TestExport_KafkaFailureIsUnavailableWithRetryInfo` |
 | Publish deadline | remove `context.WithTimeout` in `ingest.publish` | `TestExport_PublishTimeoutBoundsTheWait` |
 | Deadline after broker death | in `kafkasink.Publish`, replace the async block with `return s.cl.ProduceSync(ctx, recs...).FirstErr()` | `TestPublish_BrokerDiesMidRunReturnsAtDeadline` fails at 3s (verified) |

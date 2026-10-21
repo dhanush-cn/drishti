@@ -1,6 +1,8 @@
 // Package otlpgrpc is the thin gRPC transport for OTLP. All real work is in
 // package ingest; this file only decodes, calls it, and maps errors to
-// OTLP-spec status codes.
+// OTLP-spec status codes. gzip.go registers the "gzip" decompressor: the
+// collector's otlp exporter sends gzip by default, and without one every
+// export fails with UNIMPLEMENTED "grpc: Decompressor is not installed".
 package otlpgrpc
 
 import (
@@ -11,10 +13,6 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	// Registers the gzip decompressor. The collector's otlp exporter sends
-	// gzip by default; without this import every export fails with
-	// UNIMPLEMENTED "grpc: Decompressor is not installed".
-	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
