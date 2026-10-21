@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -65,6 +66,14 @@ type Config struct {
 type Ingester struct {
 	sink Sink
 	cfg  Config
+
+	// Counted per logs request: sent as received vs split and re-encoded.
+	passThrough, split atomic.Int64
+}
+
+// LogsPaths reports how many logs requests went each way.
+func (i *Ingester) LogsPaths() (passThrough, split int64) {
+	return i.passThrough.Load(), i.split.Load()
 }
 
 func New(sink Sink, cfg Config) *Ingester {
@@ -73,11 +82,30 @@ func New(sink Sink, cfg Config) *Ingester {
 
 // ExportLogs splits, publishes and waits for acks.
 func (i *Ingester) ExportLogs(ctx context.Context, req *collogs.ExportLogsServiceRequest) (Result, error) {
+	i.split.Add(1)
 	msgs, rejected, err := splitLogs(req, i.cfg.MaxMessageBytes)
 	if err != nil {
 		return Result{}, err
 	}
 	return i.publish(ctx, Logs, msgs, rejected, "log record")
+}
+
+// ExportLogsRaw is ExportLogs for a request whose uncompressed wire bytes
+// are known. A request with exactly one resource that has records and fits
+// one message is published as those bytes: they already are a valid
+// ExportLogsServiceRequest with one ResourceLogs, which is the Kafka value
+// format, so decoding it gives the same records a re-encode would. Only
+// the key (service.name) needs the decoded struct. Anything else takes the
+// normal split path.
+//
+// Week 2 profile at 150k rec/s: proto size + marshal for the re-encode
+// were ~9% and more of the receiver's CPU, for bytes it already had.
+func (i *Ingester) ExportLogsRaw(ctx context.Context, req *collogs.ExportLogsServiceRequest, raw []byte) (Result, error) {
+	if rls := req.GetResourceLogs(); len(rls) == 1 && len(raw) <= i.cfg.MaxMessageBytes && hasLogRecords(rls[0]) {
+		i.passThrough.Add(1)
+		return i.publish(ctx, Logs, []Message{{Key: serviceKey(rls[0].GetResource()), Value: raw}}, 0, "log record")
+	}
+	return i.ExportLogs(ctx, req)
 }
 
 // ExportMetrics splits, publishes and waits for acks.

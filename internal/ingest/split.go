@@ -70,6 +70,15 @@ func marshal(m proto.Message) ([]byte, error) {
 
 // ---- logs ----
 
+func hasLogRecords(rl *logsv1.ResourceLogs) bool {
+	for _, sl := range rl.GetScopeLogs() {
+		if len(sl.GetLogRecords()) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func wrapLogs(rl *logsv1.ResourceLogs) *collogs.ExportLogsServiceRequest {
 	return &collogs.ExportLogsServiceRequest{ResourceLogs: []*logsv1.ResourceLogs{rl}}
 }

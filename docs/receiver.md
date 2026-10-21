@@ -152,11 +152,23 @@ About 40% is codec work (gunzip + lz4) and about a third is decoding and re-enco
 
 `-compression` / `DRISHTI_KAFKA_COMPRESSION` (compose: `RECEIVER_COMPRESSION`, default lz4): lz4, zstd, snappy, gzip or none. lz4 was 15.2% of receiver CPU at 150k. The choice trades receiver CPU against bytes on Kafka's disk and network and the consumer's decompression CPU, so `week3b.sh` measures all three per codec at the same rate: receiver CPU (docker stats), topic bytes per record (log end size), consumer CPU. An unknown name is a startup error, not a silent lz4 (a typo would benchmark lz4 under another label). `TestPublish_CompressionCodecOnTheWire` reads the codec of each fetched batch back from Kafka.
 
+### 7. Pass-through for one-resource logs requests (patch 21)
+
+Decision 3 makes the Kafka value an `ExportLogsServiceRequest` with exactly one resource. A request that already has exactly one resource (every logs batch observed from the demo collector, `docs/loadgen.md` §13) **is** that value, so the receiver publishes its uncompressed wire bytes instead of re-encoding the decoded structs.
+
+- How the bytes are kept: gRPC's generated handler decodes and drops them. The logs service is registered with an equivalent descriptor (same service, method and metadata, so clients and grpcurl see standard OTLP) whose handler decodes into `rawLogs`; the server's codec (`grpc.ForceServerCodecV2`) copies the bytes for that one type and hands every other message to gRPC's proto codec unchanged. The copy is needed because gRPC frees the buffers when decoding returns, while the value may still sit in franz-go's buffer after the export answered. It replaces the re-encode's allocation of the same size.
+- What still happens: the request is still decoded (the key needs `service.name`, and a malformed request must fail as before). Only proto size + marshal are skipped.
+- Falls back to the split path (unchanged output, `TestExportLogsRaw_OtherShapesAreSplitAsBefore`) for: several resources, a resource with no records, or a request over `-max-message-bytes`.
+- Cloud VM microbenchmark (`BenchmarkExportLogs512`, relative only): split path ~0.37–0.42 ms and 230 KB allocated per 512-record request after decoding; raw path ~1 µs. Against ~11 ms of receiver CPU per request on the laptop, expect a few percent, not a step change; the laptop profile decides.
+- Metrics keep the split path: scraper batches carry many resources (§13), so pass-through would rarely apply.
+
 ## Revert-proofs (break → red → revert → green)
 
 | Mechanism | Break it | Expected failure |
 |---|---|---|
 | gzip support | register `gzipCodec` under another name (`Name()` returns `"gzip-k"`) | `TestGzipCompressorIsOurs`: `registered gzip compressor is <nil>` (verified); `TestExport_GzipFromCollectorIsAccepted` |
+| Pass-through | make the condition in `ExportLogsRaw` always false | `TestExportLogsRaw_OneResourcePublishesTheRequestBytes`: `value is not the request's bytes (re-encoded?)`; `TestExport_OneResourceRequestPassesThroughAsSent`: `paths pass-through=0 split=1` (verified) |
+| Raw handler | register with `collogs.RegisterLogsServiceServer` again | `TestExport_OneResourceRequestPassesThroughAsSent`: `paths pass-through=0 split=1` (verified) |
 | Compression flag | hardcode `kgo.Lz4Compression()` in `kafkasink.New` | `TestPublish_CompressionCodecOnTheWire`: `batch codecs on the wire map[3:2], want only 4` (and 0, 1, 2) (verified) |
 | Retryable mapping | in `toStatus`, return `codes.Internal` for `ErrPublish` | `TestExport_KafkaFailureIsUnavailableWithRetryInfo` |
 | Publish deadline | remove `context.WithTimeout` in `ingest.publish` | `TestExport_PublishTimeoutBoundsTheWait` |

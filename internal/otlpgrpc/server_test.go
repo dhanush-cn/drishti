@@ -1,6 +1,7 @@
 package otlpgrpc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -19,6 +21,7 @@ import (
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/dhanush-cn/drishti/internal/ingest"
 )
@@ -124,5 +127,55 @@ func TestExport_PartialSuccessInResponse(t *testing.T) {
 	}
 	if got := resp.GetPartialSuccess().GetRejectedLogRecords(); got != 1 {
 		t.Fatalf("rejected_log_records=%d, want 1", got)
+	}
+}
+
+// capSink keeps every published message.
+type capSink struct{ got []ingest.Message }
+
+func (c *capSink) Publish(_ context.Context, _ ingest.Signal, msgs []ingest.Message) error {
+	c.got = append(c.got, msgs...)
+	return nil
+}
+
+// Through real gRPC with gzip, as the collector sends it: a one-resource
+// request reaches Kafka as the bytes the client put on the wire, and the
+// standard services still work through the server's codec.
+func TestExport_OneResourceRequestPassesThroughAsSent(t *testing.T) {
+	sink := &capSink{}
+	ing := ingest.New(sink, ingest.Config{MaxMessageBytes: 900 << 10, PublishTimeout: time.Second})
+	gs, _ := NewServer(ing, 16<<20)
+	lis := bufconn.Listen(1 << 20)
+	go gs.Serve(lis)
+	t.Cleanup(gs.Stop)
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	req := logsReq(100, 30)
+	if _, err := collogs.NewLogsServiceClient(conn).Export(context.Background(), req, grpc.UseCompressor("gzip")); err != nil {
+		t.Fatal(err)
+	}
+	sent, _ := proto.Marshal(req)
+	if len(sink.got) != 1 || !bytes.Equal(sink.got[0].Value, sent) || string(sink.got[0].Key) != "cart" {
+		t.Fatalf("published %d messages; want the client's %d wire bytes keyed cart", len(sink.got), len(sent))
+	}
+	if pt, sp := ing.LogsPaths(); pt != 1 || sp != 0 {
+		t.Fatalf("paths pass-through=%d split=%d, want 1/0", pt, sp)
+	}
+	two := logsReq(5, 10)
+	two.ResourceLogs = append(two.ResourceLogs, logsReq(5, 10).ResourceLogs...)
+	if _, err := collogs.NewLogsServiceClient(conn).Export(context.Background(), two); err != nil {
+		t.Fatal(err)
+	}
+	if pt, sp := ing.LogsPaths(); pt != 1 || sp != 1 || len(sink.got) != 3 {
+		t.Fatalf("two-resource request: paths %d/%d, messages %d; want split into 2", pt, sp, len(sink.got))
+	}
+	if r, err := healthpb.NewHealthClient(conn).Check(context.Background(), &healthpb.HealthCheckRequest{}); err != nil || r.Status != healthpb.HealthCheckResponse_SERVING {
+		t.Fatalf("health through the server codec: %v %v", r, err)
 	}
 }

@@ -37,9 +37,12 @@ func NewServer(ing *ingest.Ingester, maxRecvBytes int) (*grpc.Server, *health.Se
 	// can exceed it and fail with RESOURCE_EXHAUSTED, which looks like
 	// backpressure but is not. Set it explicitly and size collector batches
 	// to stay under it.
-	gs := grpc.NewServer(grpc.MaxRecvMsgSize(maxRecvBytes))
+	//
+	// The codec keeps the wire bytes of logs requests for pass-through
+	// (raw.go); every other message uses gRPC's proto codec.
+	gs := grpc.NewServer(grpc.MaxRecvMsgSize(maxRecvBytes), grpc.ForceServerCodecV2(newRawCodec()))
 
-	collogs.RegisterLogsServiceServer(gs, &logsServer{ing: ing})
+	gs.RegisterService(&logsServiceDesc, &logsServer{ing: ing})
 	colmetrics.RegisterMetricsServiceServer(gs, &metricsServer{ing: ing})
 
 	hs := health.NewServer()
@@ -54,8 +57,17 @@ type logsServer struct {
 	ing *ingest.Ingester
 }
 
+// Export satisfies collogs.LogsServiceServer (the HandlerType of the
+// service descriptor); requests arrive through exportRaw.
 func (s *logsServer) Export(ctx context.Context, req *collogs.ExportLogsServiceRequest) (*collogs.ExportLogsServiceResponse, error) {
-	res, err := s.ing.ExportLogs(ctx, req)
+	return s.respond(s.ing.ExportLogs(ctx, req))
+}
+
+func (s *logsServer) exportRaw(ctx context.Context, in *rawLogs) (*collogs.ExportLogsServiceResponse, error) {
+	return s.respond(s.ing.ExportLogsRaw(ctx, &in.req, in.raw))
+}
+
+func (s *logsServer) respond(res ingest.Result, err error) (*collogs.ExportLogsServiceResponse, error) {
 	if err != nil {
 		return nil, toStatus(err)
 	}
