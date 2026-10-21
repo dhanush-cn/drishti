@@ -41,6 +41,13 @@ services:
       # timestamps. Production would start at earliest (the flag default).
       # Only matters while the group has no committed offset.
       DRISHTI_STORAGE_RESET: "latest"
+      # Static member: a restarted container takes over at once (docs/storage.md
+      # decision 7). One replica here; more replicas need distinct IDs.
+      DRISHTI_STORAGE_INSTANCE_ID: "storage-1"
+      DRISHTI_STORAGE_SESSION_TIMEOUT: "15s"
+      # Kill test only (week3b.sh sets it for one run): exit after the Nth
+      # insert without committing it.
+      DRISHTI_STORAGE_DEBUG_CRASH_AFTER_INSERTS: "${STORAGE_CRASH_AFTER:-0}"
       GOMEMLIMIT: "600MiB"
       DRISHTI_PPROF_ADDR: ":6060"
     ports:

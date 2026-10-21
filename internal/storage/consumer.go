@@ -60,13 +60,28 @@ type Config struct {
 	CH              *CH
 	Log             *slog.Logger
 
-	// crashAfterInsert (tests only): when it returns true after an insert
-	// succeeded, Run returns errCrash before committing, as if the process
-	// had died between the two steps.
-	crashAfterInsert func() bool
+	// InstanceID makes the consumer a static group member (KIP-345). A
+	// restarted process with the same ID takes its predecessor's place at
+	// once, instead of joining as a new member while the group waits for
+	// the dead one's session to expire (~47 s measured on 20 Oct). Two live
+	// processes must never share an ID: the newer one fences the older.
+	// Empty = dynamic membership.
+	InstanceID string
+	// SessionTimeout: how long a silent member keeps its partitions.
+	// Shorter = faster takeover when a member dies for good; too short =
+	// partitions move on a GC pause. 0 = franz-go's 45 s.
+	SessionTimeout time.Duration
+
+	// CrashAfterInsert, when it returns true after an insert succeeded,
+	// stops Run before that insert's offset is committed, as if the
+	// process died between the two steps. Tests use it, and cmd/storage
+	// exposes it as -debug-crash-after-inserts to exercise the resume skip
+	// live. Never set in normal operation.
+	CrashAfterInsert func() bool
 }
 
-var errCrash = errors.New("simulated crash after insert, before commit")
+// ErrCrash is what Run returns after CrashAfterInsert fired.
+var ErrCrash = errors.New("simulated crash after insert, before commit")
 
 // Stats are cumulative counters, logged every 10 s.
 type Stats struct {
@@ -136,7 +151,7 @@ func New(cfg Config) (*Consumer, error) {
 	if cfg.ResetLatest {
 		reset = kgo.NewOffset().AtEnd()
 	}
-	cl, err := kgo.NewClient(
+	opts := []kgo.Opt{
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.ClientID("drishti-storage"),
 		kgo.ConsumerGroup(cfg.Group),
@@ -154,7 +169,17 @@ func New(cfg Config) (*Consumer, error) {
 		kgo.OnPartitionsRevoked(c.onRevoked),
 		kgo.OnPartitionsLost(c.onLost),
 		kgo.WithHooks(&c.fetch),
-	)
+	}
+	if cfg.InstanceID != "" {
+		opts = append(opts, kgo.InstanceID(cfg.InstanceID))
+	}
+	if cfg.SessionTimeout > 0 {
+		// Heartbeats at most a third of the session apart (Kafka's rule),
+		// never slower than franz-go's 3 s default.
+		opts = append(opts, kgo.SessionTimeout(cfg.SessionTimeout),
+			kgo.HeartbeatInterval(min(cfg.SessionTimeout/3, 3*time.Second)))
+	}
+	cl, err := kgo.NewClient(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("kafka client: %w", err)
 	}
@@ -398,8 +423,9 @@ func (c *Consumer) insert(ctx context.Context, ps *partState, b *batch) {
 	defer c.idle.Broadcast()
 	ps.busy = false
 	c.pending -= len(b.buf.b)
-	if err == nil && c.cfg.crashAfterInsert != nil && c.cfg.crashAfterInsert() {
-		err = errCrash
+	if err == nil && c.cfg.CrashAfterInsert != nil && c.cfg.CrashAfterInsert() {
+		err = ErrCrash
+		c.cfg.Log.Warn("debug crash: insert stored, offset deliberately not committed", "token", b.token())
 	}
 	if c.dead {
 		return
@@ -411,7 +437,7 @@ func (c *Consumer) insert(ctx context.Context, ps *partState, b *batch) {
 			c.pending -= len(q.buf.b)
 		}
 		ps.queue = nil
-		if err == errCrash {
+		if err == ErrCrash {
 			c.dead = true // as if the process died here: no more inserts or commits
 		}
 		if c.fatal == nil {
@@ -557,7 +583,7 @@ func (c *Consumer) stop(err error) error {
 	c.mu.Unlock()
 	c.inserts.Wait()
 	c.commitStored(context.Background())
-	if err == errCrash {
+	if err == ErrCrash {
 		return err
 	}
 	return fmt.Errorf("insert: %w", err)

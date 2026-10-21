@@ -82,7 +82,7 @@ func (e *env) consumer(lim Limits, crash func() bool) *Consumer {
 	c, err := New(Config{
 		Brokers: e.cluster.ListenAddrs(), Topic: topic, Group: "drishti-storage",
 		Limits: lim, InsertTimeout: 5 * time.Second, CH: e.ch.ch(),
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), crashAfterInsert: crash,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), CrashAfterInsert: crash,
 	})
 	if err != nil {
 		e.t.Fatal(err)
@@ -150,7 +150,7 @@ func TestRun_CrashBetweenInsertAndCommitLeavesNoDuplicates(t *testing.T) {
 	var inserts atomic.Int32
 	crash := func() bool { return inserts.Add(1) == 1 } // die after the first insert
 	err := e.runUntil(e.consumer(Limits{MaxRows: 100000, MaxBytes: 8 << 20, MaxWait: 30 * time.Millisecond}, crash), 1<<30, 5*time.Second)
-	if err != errCrash {
+	if err != ErrCrash {
 		t.Fatalf("first consumer: err = %v, want simulated crash", err)
 	}
 	stored := len(e.ch.snapshot())

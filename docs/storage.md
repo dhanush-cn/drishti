@@ -83,7 +83,8 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 | Shutdown mid-insert | The in-flight attempt is not cancelled (`WithoutCancel` + insert timeout): cancelling it would turn a clean stop into an "was it written?" case. Shutdown cuts every open batch, gives each queued batch its attempt, stops retries only, then commits what succeeded |
 | ClickHouse slower than Kafka | Pending bytes reach `-max-pending-bytes`; the loop stops polling until inserts catch up (`flush_pct` in the `loop` line). Memory stays bounded, lag grows in Kafka |
 | Undecodable Kafka message | Logged with partition/offset, counted (`decode_errors`), skipped. Retrying would wedge the partition forever |
-| Consumer killed (`kill -9`) | Partitions move after the group session timeout (~45 s by default, seen locally); replay is skipped by stored offset. **Week 3:** shorter session timeout or static membership |
+| Consumer killed (`kill -9`) and restarted | Static member (decision 7): the restart takes its predecessor's place at once; replayed records are skipped by stored offset. Measured before: ~47 s with no inserts (dynamic member, 45 s session) |
+| Consumer dies for good, another member exists | Its partitions move after the session timeout, 15 s here (was 45 s) |
 
 ### 6. Background inserts (Week 3, patch 17)
 
@@ -100,6 +101,20 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 | Commits stay in the loop or the revoke callback | they never overlap, and per partition they only move forward |
 
 **Expected:** iteration time ≈ add time only, so the ceiling moves to what one goroutine can decode and encode (≈ 1/7.4 µs ≈ 135k rows/s), minus CPU taken by the receiver and generator on the same laptop. `flush_pct` should fall to ~0 and `add_pct` rise towards 100. If ClickHouse can't keep up instead, `flush_pct` comes back as backpressure, and lag shows it.
+
+### 7. Failover: static membership, 15 s session (Week 3, patch 18)
+
+**Why:** the 20 Oct kill test inserted nothing for ~47 s after the restart. The restarted process joined as a **new** member, and the group waited for the dead member's 45 s session to expire before rebalancing.
+
+| Choice | Reason |
+|---|---|
+| `-instance-id` (compose: `storage-1`), static membership (KIP-345) | A restart with the same ID replaces the old member at once, with no rebalance. `TestRun_StaticMemberRestartTakesOverAtOnce`: 0.1 s with a 25 s session; the same test under a new ID waits the full 25 s |
+| `-session-timeout 15s` (heartbeat every 3 s) | Covers a member that dies for good while another is running. Static members don't send LeaveGroup on shutdown, so the session also decides how long a cleanly stopped, never-restarted member keeps its partitions |
+| Classic group protocol, not KIP-848 | franz-go keeps classic unless `ServerSideBalancer` is set; KIP-848 is recommended from Kafka 4.3 (we run 4.3.1). It's a separate change with its own failure modes; not mixed into this one |
+
+**What it costs:** two live processes must never share an instance ID (the newer fences the older; an insert the fenced one still has in flight could land after the new owner read the table). One replica here; scaling out needs one ID per replica (e.g. from the pod name).
+
+**Live check of the resume skip:** `-debug-crash-after-inserts N` (`STORAGE_CRASH_AFTER=N` in compose) stops the consumer right after its Nth insert succeeds, **without committing it**, and exits with code 3, like a kill landing between insert and commit. The restart must show `skipped_replayed` > 0 and the run 0 loss / 0 duplicates. Debug only; off by default.
 
 ## Run
 
@@ -203,3 +218,5 @@ The instrumentation reads clocks four times per iteration and does not change be
 | Failed batch holds back its partition | on final failure, start the next queued batch instead of dropping the queue | `TestRun_FailingBatchHoldsBackItsPartitionOnly`: `partition 0 stored 10 rows behind a failed batch` (verified) |
 | Backpressure | make the pending-budget wait always true | `TestRun_StopsPollingAtPendingBudget`: `loop read 70 records while 16350 bytes were pending` (verified) |
 | Revoke waits for in-flight inserts | delete the `for ps.busy { idle.Wait() }` loop in `release` | `TestRun_RevokeWaitsForInFlightInsert`: every row of the revoked partition stored twice (verified) |
+| Static membership | restart under a different instance ID | `TestRun_StaticMemberRestartTakesOverAtOnce`: `timed out after 6s` (waited the 25 s session) (verified) |
+| Instance ID reaches the client | drop `kgo.InstanceID` from `New` | `TestNew_GroupMembershipOptions`: `InstanceID = , want storage-1` (verified) |

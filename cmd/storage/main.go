@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -33,6 +35,9 @@ func main() {
 		maxWait   = flag.Duration("batch-wait", envDur("DRISHTI_BATCH_WAIT", 2*time.Second), "flush a partition's batch this long after its first record (bounds event -> queryable at low traffic)")
 		insertTO  = flag.Duration("insert-timeout", envDur("DRISHTI_INSERT_TIMEOUT", 30*time.Second), "one insert attempt")
 		pending   = flag.Int("max-pending-bytes", envInt("DRISHTI_MAX_PENDING_BYTES", 192<<20), "encoded bytes handed to background inserts but not yet stored; above it the consumer stops polling (backpressure, bounds memory)")
+		instance  = flag.String("instance-id", env("DRISHTI_STORAGE_INSTANCE_ID", ""), "static group member ID (KIP-345): a restart with the same ID takes over at once; never share one between live processes; empty = dynamic member")
+		session   = flag.Duration("session-timeout", envDur("DRISHTI_STORAGE_SESSION_TIMEOUT", 15*time.Second), "group session timeout: how long a silent member keeps its partitions")
+		crashN    = flag.Int("debug-crash-after-inserts", envInt("DRISHTI_STORAGE_DEBUG_CRASH_AFTER_INSERTS", 0), "DEBUG: exit after the Nth successful insert without committing its offset, to exercise the resume skip live; 0 = off")
 		pprofAddr = flag.String("pprof-addr", env("DRISHTI_PPROF_ADDR", ""), "serve /debug/pprof/ on this address; empty = off")
 	)
 	flag.Parse()
@@ -61,16 +66,25 @@ func main() {
 		log.Info("pprof listening", "addr", ps.Addr())
 	}
 
+	var crash func() bool
+	if *crashN > 0 {
+		var n atomic.Int64
+		crash = func() bool { return n.Add(1) == int64(*crashN) }
+		log.Warn("DEBUG: will stop after an insert without committing it", "after_inserts", *crashN)
+	}
 	c, err := storage.New(storage.Config{
-		Brokers:         strings.Split(*brokers, ","),
-		Topic:           *topic,
-		Group:           *group,
-		ResetLatest:     *reset == "latest",
-		Limits:          storage.Limits{MaxRows: *maxRows, MaxBytes: *maxBytes, MaxWait: *maxWait},
-		InsertTimeout:   *insertTO,
-		MaxPendingBytes: *pending,
-		CH:              ch,
-		Log:             log,
+		Brokers:          strings.Split(*brokers, ","),
+		Topic:            *topic,
+		Group:            *group,
+		ResetLatest:      *reset == "latest",
+		Limits:           storage.Limits{MaxRows: *maxRows, MaxBytes: *maxBytes, MaxWait: *maxWait},
+		InsertTimeout:    *insertTO,
+		MaxPendingBytes:  *pending,
+		InstanceID:       *instance,
+		SessionTimeout:   *session,
+		CrashAfterInsert: crash,
+		CH:               ch,
+		Log:              log,
 	})
 	if err != nil {
 		log.Error("storage consumer", "err", err)
@@ -81,8 +95,11 @@ func main() {
 	defer stop()
 	log.Info("storage consumer running", "topic", *topic, "group", *group, "table", *table,
 		"batch_rows", *maxRows, "batch_bytes", *maxBytes, "batch_wait", maxWait.String(), "reset", *reset,
-		"max_pending_bytes", *pending)
-	if err := c.Run(ctx); err != nil {
+		"max_pending_bytes", *pending, "instance_id", *instance, "session_timeout", session.String())
+	if err := c.Run(ctx); errors.Is(err, storage.ErrCrash) {
+		log.Error("debug crash: exiting with stored but uncommitted rows (the restart must skip them)")
+		os.Exit(3)
+	} else if err != nil {
 		log.Error("stopped with error (uncommitted batches are re-read on restart)", "err", err)
 		os.Exit(1)
 	}
