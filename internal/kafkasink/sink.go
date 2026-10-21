@@ -40,6 +40,29 @@ type Config struct {
 	// outage, records whose export already failed (and that the sender is
 	// retrying) would otherwise pin buffer space indefinitely.
 	DeliveryTimeout time.Duration
+
+	// Compression of produce batches: lz4 (default), zstd, snappy, gzip or
+	// none. Consumers need no setting: the codec travels in each batch.
+	Compression string
+}
+
+// Codec maps a -compression name to franz-go's codec. Unknown names are an
+// error, not a silent fallback: a typo would otherwise benchmark lz4 under
+// another label.
+func Codec(name string) (kgo.CompressionCodec, error) {
+	switch name {
+	case "", "lz4":
+		return kgo.Lz4Compression(), nil
+	case "zstd":
+		return kgo.ZstdCompression(), nil
+	case "snappy":
+		return kgo.SnappyCompression(), nil
+	case "gzip":
+		return kgo.GzipCompression(), nil
+	case "none":
+		return kgo.NoCompression(), nil
+	}
+	return kgo.CompressionCodec{}, fmt.Errorf("unknown compression %q (lz4, zstd, snappy, gzip, none)", name)
 }
 
 type Sink struct {
@@ -48,6 +71,10 @@ type Sink struct {
 }
 
 func New(cfg Config) (*Sink, error) {
+	codec, err := Codec(cfg.Compression)
+	if err != nil {
+		return nil, err
+	}
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.ClientID("drishti-receiver"),
@@ -57,9 +84,10 @@ func New(cfg Config) (*Sink, error) {
 		// if replicas are added later.
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.ProducerLinger(cfg.Linger),
-		// lz4: cheap CPU on the hot path. zstd compresses OTLP protobuf
-		// better; compare both in week 3 with real numbers.
-		kgo.ProducerBatchCompression(kgo.Lz4Compression()),
+		// lz4 by default: cheap CPU on the hot path. -compression switches
+		// codecs so week3b.sh can compare receiver CPU, Kafka bytes and
+		// consumer CPU per codec (docs/receiver.md decision 6).
+		kgo.ProducerBatchCompression(codec),
 		kgo.ProducerBatchMaxBytes(cfg.BatchMaxBytes),
 		kgo.MaxBufferedBytes(cfg.MaxBufferedBytes),
 		kgo.RecordDeliveryTimeout(cfg.DeliveryTimeout),

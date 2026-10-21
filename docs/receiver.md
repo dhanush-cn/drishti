@@ -148,11 +148,16 @@ About 40% is codec work (gunzip + lz4) and about a third is decoding and re-enco
 - Cloud VM microbenchmark (`BenchmarkDecompress`, one 512-record request with random-hex bodies; relative only): stdlib over `mem.Reader` ~3.3–3.7 ms, gzipCodec ~1.6–1.8 ms per request, 27 → 12 allocations. The laptop question is what share of receiver CPU it removes at 150k.
 - Wire behaviour is unchanged: stdlib-written gzip reads back, ours reads in stdlib (`TestGzipRoundTrip`), and the collector-path test still passes.
 
+### 6. Kafka batch compression is a flag (patch 20)
+
+`-compression` / `DRISHTI_KAFKA_COMPRESSION` (compose: `RECEIVER_COMPRESSION`, default lz4): lz4, zstd, snappy, gzip or none. lz4 was 15.2% of receiver CPU at 150k. The choice trades receiver CPU against bytes on Kafka's disk and network and the consumer's decompression CPU, so `week3b.sh` measures all three per codec at the same rate: receiver CPU (docker stats), topic bytes per record (log end size), consumer CPU. An unknown name is a startup error, not a silent lz4 (a typo would benchmark lz4 under another label). `TestPublish_CompressionCodecOnTheWire` reads the codec of each fetched batch back from Kafka.
+
 ## Revert-proofs (break → red → revert → green)
 
 | Mechanism | Break it | Expected failure |
 |---|---|---|
 | gzip support | register `gzipCodec` under another name (`Name()` returns `"gzip-k"`) | `TestGzipCompressorIsOurs`: `registered gzip compressor is <nil>` (verified); `TestExport_GzipFromCollectorIsAccepted` |
+| Compression flag | hardcode `kgo.Lz4Compression()` in `kafkasink.New` | `TestPublish_CompressionCodecOnTheWire`: `batch codecs on the wire map[3:2], want only 4` (and 0, 1, 2) (verified) |
 | Retryable mapping | in `toStatus`, return `codes.Internal` for `ErrPublish` | `TestExport_KafkaFailureIsUnavailableWithRetryInfo` |
 | Publish deadline | remove `context.WithTimeout` in `ingest.publish` | `TestExport_PublishTimeoutBoundsTheWait` |
 | Deadline after broker death | in `kafkasink.Publish`, replace the async block with `return s.cl.ProduceSync(ctx, recs...).FirstErr()` | `TestPublish_BrokerDiesMidRunReturnsAtDeadline` fails at 3s (verified) |

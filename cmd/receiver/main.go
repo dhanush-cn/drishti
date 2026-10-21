@@ -35,6 +35,7 @@ func main() {
 		linger         = flag.Duration("linger", envDur("DRISHTI_LINGER", 5*time.Millisecond), "producer linger")
 		deliveryTO     = flag.Duration("delivery-timeout", envDur("DRISHTI_DELIVERY_TIMEOUT", 30*time.Second), "give up on an undelivered record after this long (its export already failed and the sender is retrying)")
 		bufBytes       = flag.Int("max-buffered-bytes", envInt("DRISHTI_MAX_BUFFERED_BYTES", 64<<20), "producer memory bound before Produce blocks")
+		compression    = flag.String("compression", env("DRISHTI_KAFKA_COMPRESSION", "lz4"), "Kafka batch compression: lz4, zstd, snappy, gzip, none")
 		pprofAddr      = flag.String("pprof-addr", env("DRISHTI_PPROF_ADDR", ""), "serve /debug/pprof/ on this address (e.g. :6060); empty = off")
 	)
 	flag.Parse()
@@ -47,6 +48,7 @@ func main() {
 		Linger:           *linger,
 		MaxBufferedBytes: *bufBytes,
 		DeliveryTimeout:  *deliveryTO,
+		Compression:      *compression,
 		BatchMaxBytes:    1_000_000, // just under Kafka's default max.message.bytes (1,048,588)
 	})
 	if err != nil {
@@ -102,7 +104,7 @@ func main() {
 		}
 	}()
 
-	log.Info("receiver listening", "addr", *listen, "brokers", *brokers, "logs_topic", *logsTopic, "metrics_topic", *metricsTopic)
+	log.Info("receiver listening", "addr", *listen, "brokers", *brokers, "logs_topic", *logsTopic, "metrics_topic", *metricsTopic, "compression", *compression)
 	if err := gs.Serve(lis); err != nil {
 		log.Error("serve", "err", err)
 		os.Exit(1)

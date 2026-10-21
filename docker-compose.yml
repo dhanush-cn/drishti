@@ -69,6 +69,8 @@ services:
       DRISHTI_LISTEN: ":4317"
       DRISHTI_KAFKA_BROKERS: "kafka:29092"
       GOMEMLIMIT: "400MiB"
+      # Kafka batch codec; week3b.sh overrides it per run for the comparison.
+      DRISHTI_KAFKA_COMPRESSION: "${RECEIVER_COMPRESSION:-lz4}"
       # Profiling endpoint (internal/pprofsrv). Idle cost is nil; a CPU
       # profile samples only while one is being fetched.
       DRISHTI_PPROF_ADDR: ":6060"

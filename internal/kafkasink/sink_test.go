@@ -1,9 +1,11 @@
 package kafkasink
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -213,5 +215,87 @@ func TestPublish_PartitionsMatchSharedPartitioner(t *testing.T) {
 				t.Errorf("key %q on partition %d, shared partitioner predicts %d", r.Key, r.Partition, want)
 			}
 		})
+	}
+}
+
+// codecSeen records the compression codec of every batch a consumer reads.
+type codecSeen struct {
+	mu    sync.Mutex
+	types map[uint8]int
+}
+
+func (c *codecSeen) OnFetchBatchRead(_ kgo.BrokerMetadata, _ string, _ int32, m kgo.FetchBatchMetrics) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.types[m.CompressionType]++
+}
+
+// Each -compression name must put that codec on the wire (FetchBatchMetrics
+// reports the batch's codec: 0 none, 1 gzip, 2 snappy, 3 lz4, 4 zstd), and
+// the consumer must read it back without any setting of its own.
+func TestPublish_CompressionCodecOnTheWire(t *testing.T) {
+	for name, want := range map[string]uint8{"none": 0, "gzip": 1, "snappy": 2, "lz4": 3, "": 3, "zstd": 4} {
+		t.Run("codec="+name, func(t *testing.T) {
+			brokers := cluster(t, "otlp.logs", "otlp.metrics")
+			s, err := New(Config{
+				Brokers: brokers, LogsTopic: "otlp.logs", MetricsTopic: "otlp.metrics",
+				Linger: time.Millisecond, MaxBufferedBytes: 16 << 20, BatchMaxBytes: 1_000_000,
+				DeliveryTimeout: 30 * time.Second, Compression: name,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.cl.Close()
+			value := bytes.Repeat([]byte("otlp-payload "), 400)
+			msgs := []ingest.Message{{Key: []byte("cart"), Value: value}, {Key: []byte("ad"), Value: value}}
+			if err := s.Publish(context.Background(), ingest.Logs, msgs); err != nil {
+				t.Fatal(err)
+			}
+			seen := &codecSeen{types: map[uint8]int{}}
+			cons, err := kgo.NewClient(kgo.SeedBrokers(brokers...), kgo.ConsumeTopics("otlp.logs"),
+				kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), kgo.WithHooks(seen))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cons.Close()
+			got := 0
+			// Generous: this checks codecs, not speed. A fresh consumer
+			// needs metadata, an offset lookup and a fetch, and 5 s once
+			// ran out on a VM busy with -race builds of other packages.
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			var fetchErrs []error
+			for got < len(msgs) && ctx.Err() == nil {
+				fs := cons.PollFetches(ctx)
+				fs.EachError(func(_ string, _ int32, err error) {
+					if ctx.Err() == nil {
+						fetchErrs = append(fetchErrs, err)
+					}
+				})
+				fs.EachRecord(func(r *kgo.Record) {
+					if !bytes.Equal(r.Value, value) {
+						t.Errorf("value changed in transit")
+					}
+					got++
+				})
+			}
+			if got != len(msgs) {
+				t.Fatalf("read back %d of %d (fetch errors: %v)", got, len(msgs), fetchErrs)
+			}
+			seen.mu.Lock()
+			defer seen.mu.Unlock()
+			if len(seen.types) != 1 || seen.types[want] == 0 {
+				t.Fatalf("batch codecs on the wire %v, want only %d", seen.types, want)
+			}
+		})
+	}
+}
+
+func TestCodec_UnknownNameIsAnError(t *testing.T) {
+	if _, err := Codec("lz-4"); err == nil {
+		t.Fatal("typo accepted")
+	}
+	if _, err := New(Config{Brokers: []string{"localhost:1"}, Compression: "zstandard"}); err == nil {
+		t.Fatal("New accepted an unknown codec")
 	}
 }
