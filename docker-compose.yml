@@ -48,13 +48,18 @@ services:
       # Kill test only (week3b.sh sets it for one run): exit after the Nth
       # insert without committing it.
       DRISHTI_STORAGE_DEBUG_CRASH_AFTER_INSERTS: "${STORAGE_CRASH_AFTER:-0}"
+      # Partitions decoded in parallel per poll (docs/storage.md "Parallel
+      # decode"). 0 = GOMAXPROCS; week4a.sh sets 1/2/4/6 for the drain test.
+      DRISHTI_STORAGE_DECODE_WORKERS: "${STORAGE_DECODE_WORKERS:-0}"
       GOMEMLIMIT: "600MiB"
       DRISHTI_PPROF_ADDR: ":6060"
     ports:
       - "127.0.0.1:16061:6060"
     # Six open batches (up to 32 MiB each) + up to 192 MiB handed to
-    # background inserts (-max-pending-bytes) + one decoded message each:
-    # ~400 MiB at the worst case, under GOMEMLIMIT 600MiB.
+    # background inserts (-max-pending-bytes) + one decoded message per
+    # partition (parallel decode keeps one per partition, not one in all):
+    # ~400 MiB at the worst case, under GOMEMLIMIT 600MiB. week4a.sh records
+    # the container's memory and GC during the drain runs to check this.
     mem_limit: 768m
     networks:
       default: {}

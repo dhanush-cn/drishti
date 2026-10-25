@@ -21,8 +21,10 @@ func TestLoopWindow_Attrs(t *testing.T) {
 	t0 := time.Unix(1000, 0)
 	w := loopWindow{start: t0}
 	// Two full polls that each flushed, one empty poll: 10 s of wall time.
-	w.observe(iteration{msgs: 30, parts: 6, batches: 6, poll: 1 * time.Second, add: 500 * time.Millisecond, flush: 2 * time.Second, commit: 100 * time.Millisecond})
-	w.observe(iteration{msgs: 18, parts: 3, batches: 2, poll: 2 * time.Second, add: 300 * time.Millisecond, flush: 1 * time.Second, commit: 100 * time.Millisecond})
+	w.observe(iteration{msgs: 30, parts: 6, batches: 6, poll: 1 * time.Second, add: 500 * time.Millisecond, flush: 2 * time.Second, commit: 100 * time.Millisecond,
+		decode: decodeStats{parts: 6, workers: 6, wall: 400 * time.Millisecond, busy: 1800 * time.Millisecond, slowest: 300 * time.Millisecond}})
+	w.observe(iteration{msgs: 18, parts: 3, batches: 2, poll: 2 * time.Second, add: 300 * time.Millisecond, flush: 1 * time.Second, commit: 100 * time.Millisecond,
+		decode: decodeStats{parts: 3, workers: 2, wall: 200 * time.Millisecond, busy: 300 * time.Millisecond, slowest: 200 * time.Millisecond}})
 	w.observe(iteration{poll: 2 * time.Second})
 	f := fetchSnapshot{batches: 9, records: 48, compressed: 9 * 900 << 10, uncompressed: 9 * 4 << 20}
 	got := kvMap(w.attrs(t0.Add(10*time.Second), f, 700_000, 1<<20))
@@ -36,6 +38,10 @@ func TestLoopWindow_Attrs(t *testing.T) {
 		"fetch_compressed_mib": int64(7), "fetch_uncompressed_mib": int64(36),
 		"flushes": int64(2), "batches_per_flush": 4.0, "avg_flush_ms": 1500.0, "max_flush_ms": int64(2000),
 		"avg_iter_ms": 3333.3,
+		// Decode: two iterations decoded (the empty poll is not counted):
+		// cap (6+2)/2, busy 2100 / wall 600 ms, slowest (300+200)/600.
+		"decode_par_cap": 4.0, "decode_par": 3.5, "decode_slowest_pct": 83.3,
+		"decode_busy_ms": int64(2100), "decode_wall_ms": int64(600),
 	}
 	for k, v := range want {
 		if got[k] != v {
@@ -106,9 +112,18 @@ func TestRun_LoopLineAccountsForEveryMessage(t *testing.T) {
 	if len(loops) == 0 {
 		t.Fatal("no loop line logged")
 	}
-	var msgs, compressed, flushes float64
+	var msgs, compressed, flushes, parCap float64
 	for _, l := range loops {
 		msgs += l["msgs"].(float64)
+		// min(DecodeWorkers, partitions in the poll): never above 3 here.
+		if pc := l["decode_par_cap"].(float64); pc > 3 {
+			t.Errorf("decode_par_cap = %v with 3 partitions", pc)
+		} else {
+			parCap = max(parCap, pc)
+		}
+		if _, ok := l["decode_slowest_pct"]; !ok {
+			t.Errorf("loop line has no decode_slowest_pct: %v", l)
+		}
 		compressed += l["kib_per_part_fetch"].(float64)
 		flushes += l["flushes"].(float64)
 		if l["cap_kib"].(float64) != 1024 {
@@ -120,6 +135,9 @@ func TestRun_LoopLineAccountsForEveryMessage(t *testing.T) {
 	}
 	if compressed <= 0 {
 		t.Errorf("kib_per_part_fetch never > 0: fetch hook not wired? %v", loops)
+	}
+	if parCap < 1 {
+		t.Errorf("decode_par_cap never >= 1 although records were decoded: %v", loops)
 	}
 	if flushes == 0 {
 		t.Errorf("no flush counted, but rows were inserted: %v", loops)

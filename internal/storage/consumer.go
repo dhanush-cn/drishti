@@ -22,6 +22,9 @@
 // after the previous one for that partition succeeded. A later batch landing
 // before an earlier one failed would raise max(kafka_offset) past records
 // that are not stored, and the resume would skip them: loss.
+//
+// Decoding runs in parallel across the partitions of one poll (decode.go,
+// docs/storage.md decision 8), without changing any of the rules above.
 package storage
 
 import (
@@ -29,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -37,7 +41,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 type Config struct {
@@ -57,8 +60,13 @@ type Config struct {
 	// that is the backpressure, and it bounds memory.
 	MaxPendingBytes int
 	PollWait        time.Duration // max wait in one poll, so age-based flushes fire on idle partitions
-	CH              *CH
-	Log             *slog.Logger
+	// DecodeWorkers bounds how many partitions of one poll are decoded at
+	// once (decode.go). 1 = the serial loop of patch 17, on the loop
+	// goroutine; 0 = GOMAXPROCS. More than the number of partitions in a
+	// poll buys nothing: one partition is never split across goroutines.
+	DecodeWorkers int
+	CH            *CH
+	Log           *slog.Logger
 
 	// InstanceID makes the consumer a static group member (KIP-345). A
 	// restarted process with the same ID takes its predecessor's place at
@@ -100,12 +108,16 @@ type Consumer struct {
 	fetch    fetchStats
 	lastRows int64
 
-	mu      sync.Mutex
-	open    map[int32]*batch // being filled
-	ready   []*batch         // full or due, to hand to an insert this iteration
-	skip    map[int32]int64  // records at or below this offset are already stored
-	fatal   error            // set by a callback or an insert; Run returns it
-	reqPool collogs.ExportLogsServiceRequest
+	mu       sync.Mutex
+	open     map[int32]*batch                            // being filled
+	ready    []*batch                                    // full or due, to hand to an insert this iteration
+	skip     map[int32]int64                             // records at or below this offset are already stored
+	fatal    error                                       // set by a callback or an insert; Run returns it
+	decoders map[int32]*collogs.ExportLogsServiceRequest // one reusable request per partition (decode.go)
+
+	// testDecodeHook, if set, runs at the start of each partition's decode
+	// (decode.go). Tests set it before Run to observe parallelism.
+	testDecodeHook func(partition int32)
 
 	// Background inserts, all under mu. idle is signalled whenever an insert
 	// finishes, so waiters (backpressure, revoke, shutdown) re-check.
@@ -138,6 +150,9 @@ func New(cfg Config) (*Consumer, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
+	if cfg.DecodeWorkers <= 0 {
+		cfg.DecodeWorkers = runtime.GOMAXPROCS(0)
+	}
 	if cfg.MaxPendingBytes <= 0 {
 		cfg.MaxPendingBytes = 192 << 20
 	}
@@ -145,7 +160,8 @@ func New(cfg Config) (*Consumer, error) {
 		return nil, fmt.Errorf("max pending bytes %d is below one batch (%d): the loop could never hand a full batch to an insert", cfg.MaxPendingBytes, cfg.Limits.MaxBytes)
 	}
 	c := &Consumer{cfg: cfg, open: map[int32]*batch{}, skip: map[int32]int64{},
-		parts: map[int32]*partState{}, stored: map[int32]*kgo.Record{}}
+		decoders: map[int32]*collogs.ExportLogsServiceRequest{},
+		parts:    map[int32]*partState{}, stored: map[int32]*kgo.Record{}}
 	c.idle = sync.NewCond(&c.mu)
 	reset := kgo.NewOffset().AtStart()
 	if cfg.ResetLatest {
@@ -288,52 +304,10 @@ func (c *Consumer) release(parts []int32) []*kgo.Record {
 		}
 		delete(c.open, p)
 		delete(c.skip, p)
+		delete(c.decoders, p)
 	}
 	c.ready = slices.DeleteFunc(c.ready, func(b *batch) bool { return slices.Contains(parts, b.partition) })
 	return last
-}
-
-// add appends one Kafka record to its partition's batch. Called with mu held.
-func (c *Consumer) add(r *kgo.Record) {
-	c.Stats.Records.Add(1)
-	if s, ok := c.skip[r.Partition]; ok && r.Offset <= s {
-		c.Stats.Skipped.Add(1)
-		return
-	}
-	req := &c.reqPool
-	proto.Reset(req)
-	if err := proto.Unmarshal(r.Value, req); err != nil {
-		// A message the receiver produced but we cannot decode would wedge
-		// the partition forever if retried; log it with its coordinates
-		// and move on. Counted, never silent.
-		c.Stats.DecodeErrors.Add(1)
-		c.cfg.Log.Error("undecodable message skipped", "partition", r.Partition, "offset", r.Offset, "err", err)
-		return
-	}
-	n := 0
-	for _, rl := range req.GetResourceLogs() {
-		for _, sl := range rl.GetScopeLogs() {
-			n += len(sl.GetLogRecords())
-		}
-	}
-	day := dayOf(r.Timestamp)
-	b := c.open[r.Partition]
-	// Cut before adding when the message would cross a day or the row
-	// limit: a message is never split, so each insert stays one part.
-	if b != nil && b.rows > 0 && (b.day != day || b.rows+n > c.cfg.Limits.MaxRows) {
-		c.ready = append(c.ready, b)
-		b = nil
-	}
-	if b == nil {
-		b = &batch{topic: r.Topic, partition: r.Partition, day: day, first: r.Offset, started: time.Now()}
-		c.open[r.Partition] = b
-	}
-	b.rows += AppendLogs(&b.buf, req, Source{Partition: r.Partition, Offset: r.Offset, Received: r.Timestamp})
-	b.last = r
-	if b.full(c.cfg.Limits) {
-		c.ready = append(c.ready, b)
-		delete(c.open, r.Partition)
-	}
 }
 
 // takeReady returns the batches to flush now (full, cut, or older than
@@ -505,7 +479,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 		"fetch_max_bytes", c.cl.OptValue(kgo.FetchMaxBytes),
 		"fetch_max_partition_bytes", c.cl.OptValue(kgo.FetchMaxPartitionBytes),
 		"max_concurrent_fetches", c.cl.OptValue(kgo.MaxConcurrentFetches),
-		"poll_wait", c.cfg.PollWait.String(), "max_pending_bytes", c.cfg.MaxPendingBytes)
+		"poll_wait", c.cfg.PollWait.String(), "max_pending_bytes", c.cfg.MaxPendingBytes,
+		"decode_workers", c.decodeWorkers())
 	c.window = loopWindow{start: time.Now()}
 	for {
 		var it iteration
@@ -532,7 +507,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 				it.parts++
 			}
 		})
-		fs.EachRecord(c.add)
+		it.decode = c.addFetch(byPartition(fs, c.cfg.Topic))
 		stopping := ctx.Err() != nil
 		bs := c.takeReady(time.Now(), stopping)
 		c.enqueue(ctx, bs)

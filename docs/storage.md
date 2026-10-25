@@ -116,6 +116,31 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 
 **Live check of the resume skip:** `-debug-crash-after-inserts N` (`STORAGE_CRASH_AFTER=N` in compose) stops the consumer right after its Nth insert succeeds, **without committing it**, and exits with code 3, like a kill landing between insert and commit. The restart must show `skipped_replayed` > 0 and the run 0 loss / 0 duplicates. Debug only; off by default.
 
+### 8. Parallel decode, fork-join per poll (Week 4, patch 26)
+
+**Why:** after background inserts the 23 Oct runs reached ~125–142k rows/s with the loop ~99% in `add` and `flush` at 0%: decoding (`proto.Unmarshal`, 61% of consumer CPU) and RowBinary encoding (`AppendLogs`, 19%) on one goroutine, ~1.0 core. Everything else was already overlapped. Batches are per Kafka partition and no partition's batch depends on another's, so the parallelism was there, unused.
+
+**What changed (`internal/storage/decode.go`):** after `PollFetches`, each partition with records gets one goroutine (at most `-decode-workers` at once, default `GOMAXPROCS`) that decodes that partition's records **in offset order** into that partition's open batch. The loop joins all of them, then enqueues the cut batches exactly as before. `-decode-workers 1` decodes on the loop goroutine with no goroutines at all: the patch 17 loop, kept as the benchmark's control.
+
+| Rule | Why it keeps exactly-once (decision 1, decision 6) |
+|---|---|
+| One goroutine per partition, records in offset order, a partition never split | a batch is still one partition's consecutive records cut by the same rules (day, rows, never split a message): one insert = one part |
+| Each partition's cut batches enqueued in cut order after the join | the insert pipeline (≤ 1 in flight per partition, offset order, commit after insert) sees exactly what the serial loop gave it; order across partitions never mattered |
+| Fork-join between `PollFetches` and `AllowRebalance` | with `BlockRebalanceOnPoll`, franz-go runs no assign/revoke/lost callback in that window (all three go through `waitAndAddRebalance`, checked in the v1.22.1 source). `release()` never sees a half-decoded partition, so the decoders need no locking against it |
+| Goroutines touch no `Consumer` map | before the fork, under `mu`, each open batch is taken out of `c.open` and the skip offset copied out of `c.skip`; after the join, under `mu`, they go back. `mu` is free during decode, so finishing inserts are not held up |
+| One reusable decoded request per partition | a shared one would be a data race (`-race` catches it) |
+
+**Alternatives considered:** a long-lived worker per partition (decode overlaps the next poll, but it adds a second asynchronous stage that revoke and backpressure would have to drain); per-message fan-out with a reorder buffer (parallelism independent of partition count, but the most new ordering code, for a ceiling we can't use with 6 partitions); scaling out to more consumer processes (no code; exactly-once already holds per partition owner; costs one process, one progress query and one instance ID per replica). The drain test measures scale-out next to it.
+
+**Limits:**
+- Parallelism is capped by the partitions in a poll: 6 here. More needs more partitions.
+- Each poll is a barrier, so an iteration lasts as long as its slowest partition. When catching up, fetches are full (~1 MiB per partition), so polls are balanced; but the partition holding the most backlog drains last and alone. Total drain rate ≈ single-goroutine rate ÷ the hottest partition's share. On real demo logs p0 held 51% (Week 3), so the cap there is ~2×.
+- It spends more cores; it doesn't make a row cheaper. Decoding less (skip unused fields, generated unmarshalers) is a separate change.
+
+**Expected (before the run):**
+- `-decode-workers 1` reproduces the Week 3 ceiling (~125–142k rows/s).
+- At 6 workers, `add_pct` stops being the limit. The next limit is probably ClickHouse: `flush_pct` returns as backpressure at `-max-pending-bytes`, with ClickHouse CPU up. `poll_pct` rising would point at the fetch instead (`FetchMaxPartitionBytes`, `MaxConcurrentFetches`).
+
 ## Run
 
 ```bash
@@ -185,6 +210,10 @@ The ~70k rows/s ceiling came with idle CPU, so the question is where the loop sp
 | `fetch_compressed_mib` / `fetch_uncompressed_mib` | what was fetched in the window: the lz4 ratio on the wire |
 | `flushes`, `batches_per_flush`, `avg_flush_ms`, `max_flush_ms` | iterations that inserted, and how long the loop stood still for ClickHouse each time |
 | `rows_per_s`, `avg_iter_ms` | rows inserted in the window per second; wall time per iteration |
+| `decode_par_cap` | effective decode parallelism: mean of min(`-decode-workers`, partitions in the poll) over polls that decoded |
+| `decode_par` | measured mean concurrency of the decode fork-join: summed per-partition decode time ÷ fork-join wall time. Per-partition time is wall time, so under CPU contention it includes time runnable but not running |
+| `decode_slowest_pct` | share of the fork-join wall time the slowest partition took; near 100 = the join waited for one partition |
+| `decode_busy_ms`, `decode_wall_ms` | the sums behind the two ratios above |
 
 Why each fetch is bounded: with one broker, franz-go keeps **at most one fetch buffered** (`MaxConcurrentFetches` default = number of brokers). The next fetch is only requested once the buffered one has been polled. So each iteration gets at most one fetch (≤ ~1 MiB compressed per partition), and the loop's iteration time decides how often a fetch goes out.
 
@@ -198,6 +227,10 @@ How to read it at the ceiling (100k and 150k offered, consumer behind):
 | `poll_pct` ~0, `add_pct` and `flush_pct` ~50 each (**measured 21 Oct**) | serial loop: decode + encode and the insert wait take turns, nothing overlaps | background inserts (decision 6) |
 | `add_pct` high (consumer near 1 core) | decode + encode on one goroutine is the limit | parallelise decode per partition, profile `AppendLogs` |
 | `flush_pct` high after patch 17 | backpressure: pending bytes at `-max-pending-bytes`, ClickHouse slower than the loop | ClickHouse side: insert size, concurrency, parts/merges |
+| `add_pct` high, `decode_par` near `decode_par_cap` (after patch 26) | decode runs in parallel and is still the limit: not enough cores, or one partition per goroutine isn't enough | more partitions, or decode less per row |
+| `add_pct` high, `decode_par` well under `decode_par_cap`, `decode_slowest_pct` near 100 | the join waits for one hot partition | partition skew: keys, partition count |
+| `add_pct` high, `decode_par` well under `decode_par_cap`, `decode_slowest_pct` well under 100 | goroutines exist but don't run: CPU contention on the machine | look at what else holds the cores (docker stats) |
+| `add_pct` low, `poll_pct` rising (after patch 26) | the single buffered fetch is now the limit | raise `FetchMaxPartitionBytes` / `MaxConcurrentFetches` |
 
 The instrumentation reads clocks four times per iteration and does not change behaviour. Every iteration is counted, empty polls included.
 
@@ -205,9 +238,9 @@ The instrumentation reads clocks four times per iteration and does not change be
 
 | Mechanism | Break it | Expected failure |
 |---|---|---|
-| Stored-offset skip | in `add`, make the skip condition `false && …` | `TestRun_CrashBetweenInsertAndCommitLeavesNoDuplicates`: duplicated rows listed (verified) |
-| Day cut | drop `b.day != day \|\|` from the cut in `add` | `TestAdd_CutsBatchAtDayBoundaryAndRowLimit`: `[{0 2} {3 4}]` (verified) |
-| Row cut | drop the row condition from the cut and make `full` return false | same test: `[{0 0} {1 4}]` (verified) |
+| Stored-offset skip | in `decodePartition` (was `add` before patch 26), make the skip condition `false && …` | `TestRun_CrashBetweenInsertAndCommitLeavesNoDuplicates`: duplicated rows listed (verified, re-verified 25 Oct) |
+| Day cut | drop `b.day != day \|\|` from the cut in `decodePartition` | `TestAdd_CutsBatchAtDayBoundaryAndRowLimit`: `[{0 2} {3 4}]` (verified, re-verified 25 Oct) |
+| Row cut | drop the row condition from the cut and make `full` return false | same test: `[{0 0} {1 4}]` (verified, re-verified 25 Oct) |
 | Recreated-topic guard | make `stored >= end.Offset` always false | `TestRun_RefusesStoredOffsetsBeyondTopicEnd`: `err = <nil>` (verified) |
 | AllowRebalance before Close | delete it from `Run`'s defer | every `TestRun_*` hangs in `LeaveGroup` (found that way) |
 | Fetch hook | drop `kgo.WithHooks(&c.fetch)` from `New` | `TestRun_LoopLineAccountsForEveryMessage`: `kib_per_part_fetch never > 0` (verified) |
@@ -220,3 +253,10 @@ The instrumentation reads clocks four times per iteration and does not change be
 | Revoke waits for in-flight inserts | delete the `for ps.busy { idle.Wait() }` loop in `release` | `TestRun_RevokeWaitsForInFlightInsert`: every row of the revoked partition stored twice (verified) |
 | Static membership | restart under a different instance ID | `TestRun_StaticMemberRestartTakesOverAtOnce`: `timed out after 6s` (waited the 25 s session) (verified) |
 | Instance ID reaches the client | drop `kgo.InstanceID` from `New` | `TestNew_GroupMembershipOptions`: `InstanceID = , want storage-1` (verified) |
+| Parallel decode: a partition never split | in `addFetch`, give the second half of each partition's records its own goroutine | `TestAddFetch_BatchesDoNotDependOnPollsOrWorkers`: `workers=1 vs one record per poll: partition 0: 15 batches in the reference, 10 here` (verified) |
+| Parallel decode: one decoder per partition | hand every partition `c.decoder(0)` | same test under `-race`: `DATA RACE` (verified) |
+| Parallel decode: skip offset copied in | stop copying `c.skip` into the work item | same test: `skipped 0 records, want 5` (verified) |
+| Parallel decode: open batch written back | don't put `w.open` back into `c.open` after the join | same test: `reference produced batches for 0 partitions, want 6` (verified) |
+| Parallel decode: cut order kept | append each partition's cut batches in reverse | `TestRun_ParallelDecodeKeepsEachPartitionInOrder`: `partition 1 inserts out of order: [38 36 34 …]` (verified) |
+| Parallel decode: really parallel | always take the serial path | `TestAddFetch_DecodesPartitionsInParallelUpToTheLimit`: `max partitions decoding at once = 1, want 3` (verified) |
+| Parallel decode: capped at `-decode-workers` | size the semaphore 64 instead of `workers` | same test: `max partitions decoding at once = 5, want 2` (verified) |

@@ -21,8 +21,11 @@ import (
 //   - flush high: the loop stands still waiting for inserts: since
 //     background inserts, only at the pending-bytes budget (ClickHouse
 //     slower than Kafka) or at shutdown.
-//   - add high: decode + RowBinary encode on one goroutine is the limit
-//     (it would also show as ~1 core of consumer CPU).
+//   - add high: decode + RowBinary encode is the limit. Since parallel
+//     decode (decode.go), the decode_* fields say whether the partitions
+//     really ran in parallel (decode_par near decode_par_cap) or the join
+//     waited for one hot partition (decode_slowest_pct near 100 while
+//     decode_par stays low).
 //
 // Counters are per window (reset at every "loop" log line), not
 // cumulative, so each line describes the last ~10 s on its own.
@@ -33,7 +36,8 @@ type iteration struct {
 	parts   int // partitions with at least one record in the poll
 	batches int // batches handed to inserts by this iteration
 	poll    time.Duration
-	add     time.Duration // add for every record + takeReady, under mu
+	add     time.Duration // decode fork-join + takeReady + enqueue
+	decode  decodeStats
 	flush   time.Duration // waiting for inserts (backpressure or shutdown)
 	commit  time.Duration
 }
@@ -47,6 +51,11 @@ type loopWindow struct {
 	flushes, batches         int64
 	poll, add, flush, commit time.Duration
 	maxFlush                 time.Duration
+
+	// Parallel decode, summed over iterations that decoded something.
+	decodeIters                           int64
+	decodeWorkers                         int64 // sum of min(DecodeWorkers, partitions in the poll)
+	decodeWall, decodeBusy, decodeSlowest time.Duration
 }
 
 func (w *loopWindow) observe(it iteration) {
@@ -66,6 +75,13 @@ func (w *loopWindow) observe(it iteration) {
 	w.add += it.add
 	w.flush += it.flush
 	w.commit += it.commit
+	if d := it.decode; d.parts > 0 {
+		w.decodeIters++
+		w.decodeWorkers += int64(d.workers)
+		w.decodeWall += d.wall
+		w.decodeBusy += d.busy
+		w.decodeSlowest += d.slowest
+	}
 }
 
 // fetchStats counts what franz-go decoded from fetch responses, via the
@@ -137,7 +153,32 @@ func (w *loopWindow) attrs(now time.Time, f fetchSnapshot, rows int64, partCap i
 		"flushes", w.flushes, "batches_per_flush", per(w.batches, w.flushes),
 		"avg_flush_ms", per(w.flush.Milliseconds(), w.flushes), "max_flush_ms", w.maxFlush.Milliseconds(),
 		"avg_iter_ms", per(wall.Milliseconds(), w.iters),
+		// Parallel decode. decode_par_cap: mean effective parallelism,
+		// min(DecodeWorkers, partitions in the poll). decode_par: measured
+		// mean concurrency, busy / wall (busy is wall time inside each
+		// partition's decode, so under CPU contention it includes time
+		// spent runnable but not running). decode_slowest_pct: the share
+		// of the fork-join the slowest partition accounts for; near 100
+		// means the join waited for one partition.
+		"decode_par_cap", per(w.decodeWorkers, w.decodeIters),
+		"decode_par", ratio(w.decodeBusy, w.decodeWall),
+		"decode_slowest_pct", pctOf(w.decodeSlowest, w.decodeWall),
+		"decode_busy_ms", w.decodeBusy.Milliseconds(), "decode_wall_ms", w.decodeWall.Milliseconds(),
 	}
+}
+
+func pctOf(a, b time.Duration) float64 {
+	if b <= 0 {
+		return 0
+	}
+	return round1(100 * float64(a) / float64(b))
+}
+
+func ratio(a, b time.Duration) float64 {
+	if b <= 0 {
+		return 0
+	}
+	return round1(float64(a) / float64(b))
 }
 
 func round1(x float64) float64 { return float64(int64(x*10+0.5)) / 10 }

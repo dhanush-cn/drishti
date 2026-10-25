@@ -37,6 +37,7 @@ func main() {
 		pending   = flag.Int("max-pending-bytes", envInt("DRISHTI_MAX_PENDING_BYTES", 192<<20), "encoded bytes handed to background inserts but not yet stored; above it the consumer stops polling (backpressure, bounds memory)")
 		instance  = flag.String("instance-id", env("DRISHTI_STORAGE_INSTANCE_ID", ""), "static group member ID (KIP-345): a restart with the same ID takes over at once; never share one between live processes; empty = dynamic member")
 		session   = flag.Duration("session-timeout", envDur("DRISHTI_STORAGE_SESSION_TIMEOUT", 15*time.Second), "group session timeout: how long a silent member keeps its partitions")
+		decodeN   = flag.Int("decode-workers", envInt("DRISHTI_STORAGE_DECODE_WORKERS", 0), "partitions of one poll decoded at once (proto decode + RowBinary encode); 1 = serial, 0 = GOMAXPROCS")
 		crashN    = flag.Int("debug-crash-after-inserts", envInt("DRISHTI_STORAGE_DEBUG_CRASH_AFTER_INSERTS", 0), "DEBUG: exit after the Nth successful insert without committing its offset, to exercise the resume skip live; 0 = off")
 		pprofAddr = flag.String("pprof-addr", env("DRISHTI_PPROF_ADDR", ""), "serve /debug/pprof/ on this address; empty = off")
 	)
@@ -80,6 +81,7 @@ func main() {
 		Limits:           storage.Limits{MaxRows: *maxRows, MaxBytes: *maxBytes, MaxWait: *maxWait},
 		InsertTimeout:    *insertTO,
 		MaxPendingBytes:  *pending,
+		DecodeWorkers:    *decodeN,
 		InstanceID:       *instance,
 		SessionTimeout:   *session,
 		CrashAfterInsert: crash,
@@ -95,7 +97,7 @@ func main() {
 	defer stop()
 	log.Info("storage consumer running", "topic", *topic, "group", *group, "table", *table,
 		"batch_rows", *maxRows, "batch_bytes", *maxBytes, "batch_wait", maxWait.String(), "reset", *reset,
-		"max_pending_bytes", *pending, "instance_id", *instance, "session_timeout", session.String())
+		"max_pending_bytes", *pending, "decode_workers", *decodeN, "instance_id", *instance, "session_timeout", session.String())
 	if err := c.Run(ctx); errors.Is(err, storage.ErrCrash) {
 		log.Error("debug crash: exiting with stored but uncommitted rows (the restart must skip them)")
 		os.Exit(3)

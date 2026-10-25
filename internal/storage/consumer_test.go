@@ -195,17 +195,18 @@ func TestRun_FailedInsertIsRetried(t *testing.T) {
 // parts = not atomic). The day cut and the row cut fall at different
 // messages, so removing either one changes the result.
 func TestAdd_CutsBatchAtDayBoundaryAndRowLimit(t *testing.T) {
-	c := &Consumer{cfg: Config{Limits: Limits{MaxRows: 10, MaxBytes: 1 << 20, MaxWait: time.Hour}, Log: slog.Default()}, open: map[int32]*batch{}, skip: map[int32]int64{}}
+	c := bareConsumer(Limits{MaxRows: 10, MaxBytes: 1 << 20, MaxWait: time.Hour}, 1)
 	day1 := time.Date(2026, 10, 20, 23, 59, 59, 0, time.UTC)
 	day2 := day1.Add(2 * time.Second)
 	rec := func(off int64, ts time.Time, n int) *kgo.Record {
 		return &kgo.Record{Topic: topic, Partition: 0, Offset: off, Timestamp: ts, Value: message("s", fmt.Sprint(off), n)}
 	}
-	c.add(rec(0, day1, 2))
-	c.add(rec(1, day2, 2)) // new day: cut before it (rows are far below the limit)
-	c.add(rec(2, day2, 2))
-	c.add(rec(3, day2, 6)) // 2+2+6 = 10: at the limit, full: cut after it
-	c.add(rec(4, day2, 1))
+	addAll(c,
+		rec(0, day1, 2),
+		rec(1, day2, 2), // new day: cut before it (rows are far below the limit)
+		rec(2, day2, 2),
+		rec(3, day2, 6), // 2+2+6 = 10: at the limit, full: cut after it
+		rec(4, day2, 1))
 	bs := c.takeReady(time.Now(), true)
 	type span struct{ first, last int64 }
 	var got []span
