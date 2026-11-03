@@ -141,6 +141,12 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 - `-decode-workers 1` reproduces the Week 3 ceiling (~125–142k rows/s).
 - At 6 workers, `add_pct` stops being the limit. The next limit is probably ClickHouse: `flush_pct` returns as backpressure at `-max-pending-bytes`, with ClickHouse CPU up. `poll_pct` rising would point at the fetch instead (`FetchMaxPartitionBytes`, `MaxConcurrentFetches`).
 
+**Verdict (measured 25 Oct, section "Measured, 25 Oct"):**
+- Exactly-once held: 0 loss / 0 dup in 21 runs.
+- `-decode-workers 1` matched Week 3 (143–157k rows/s).
+- ClickHouse did come back first (`flush_pct` 14–28%, `poll_pct` 1–9% with all partitions busy).
+- **What the prediction missed:** each decoding goroutine got ~2.5× slower in parallel (allocation and buffer growth; heap held at `GOMEMLIMIT`). The whole drain gained 1.46×, not the decode stage's 3.2×.
+
 ## Run
 
 ```bash
@@ -196,6 +202,70 @@ Same setup as 20 Oct, serial loop (before patch 17), `loop` line on. Raw data: `
 - **Insert time barely depends on rows** (~240 ms at ~20k rows per insert, ~230 ms at ~33k): per-insert overhead dominates at these sizes. At 50k, due batches of ~3 partitions were inserted together (one wait for three inserts); at the ceiling they staggered, one wait per insert.
 - **My prediction before the run was wrong:** I expected poll + flush to dominate; it was add + flush. The reading table below lacked that row; it has it now.
 - Fix: decision 6 (background inserts).
+
+## Measured, 25 Oct (laptop, internal, patch 26, `1e70af8`, 3 runs per configuration)
+
+Driver `week4a.sh`, results `Downloads/drishti-week4/results-4a/`. Laptop on AC for every run (`require_ac` before each). Core 7 240H, WSL 15 GiB, 16 threads.
+
+**Decode stage alone** (`BenchmarkAddFetch`: 6 partitions × 6 load-generator-shaped messages of 512 rows, no Kafka or ClickHouse), median of 3:
+
+| Workers | rows/s | vs 1 |
+|---|---|---|
+| 1 | 199k | 1.00× |
+| 2 | 349k | 1.76× |
+| 4 | 481k | 2.42× |
+| 6 | 635k | 3.20× |
+
+**Drain of a fixed backlog.**
+- **Setup:** 12,999,680 rows (25,390 messages, 100k rows/s × 130 s of stamped load-generator traffic, written with storage stopped). Each drain uses a fresh table (`drishti.logs_drain`) and a fresh consumer group set to the backlog start. Configurations are interleaved across the 3 repeats.
+- **Partition skew** (7 of 20 keys hash to p1): p1 35%, p5 20%, p0 15%, p2/p3/p4 10% each.
+
+| Workers | All 6 partitions busy, rows/s (median, range) | Total drain s | Overall rows/s | Tail s (p1 alone) |
+|---|---|---|---|---|
+| 1 | 154k (143–157k) | 87.2 (83.6–91.2) | 149k | 37.1 |
+| 2 | 210k (203–214k) | 66.9 (63.7–70.3) | 194k | 29.4 |
+| 4 | 232k (230–236k) | 62.1 (60.5–63.7) | 209k | 29.2 |
+| 6 | 241k (218–254k) | 59.9 (59.6–64.8) | 217k | 28.7 |
+
+- **Correctness:** every drain stored exactly the 12,999,680 acked rows; 0 short / 0 long per sequence in all 18 drains; no insert wrote more than one part; no OOM kill.
+- **Loop with all partitions busy, 6 workers:**
+  - `decode_par` 5.0–5.2 of a cap of 6 (the goroutines do run together);
+  - `flush_pct` 14–28%: backpressure at `-max-pending-bytes`, ClickHouse at ~4 cores;
+  - `poll_pct` 1–9%.
+  - At 1 worker: `add_pct` 94–100%, as in Week 3.
+- **Why per-goroutine speed fell** (CPU profiles at 1 and 6 workers, 20 s each, same shape at both):
+  - `proto.Unmarshal` 52–54% of samples (incl. `reflect.New` ~14%, UTF-8 validation ~12%);
+  - `runtime.memmove` 18–19% flat;
+  - `rowBuf.str` → `growslice` ~21%: batch buffers grow by doubling up to ~25–32 MB, copying each time;
+  - `mallocgc` 19–23%, with allocator-lock time (`mheap.allocSpan`, `procyield`) appearing only at 6 workers.
+  - The consumer used 2.5–2.7 cores at 6 workers, so ~28% of decode goroutine time was not on CPU.
+- **Memory** (gctrace):
+  - the heap sits at the `GOMEMLIMIT` goal (~562 MB) in every drain, even at 1 worker;
+  - GC CPU: 0% at 1 worker, 4–7% at 6;
+  - heap peak 587–593 MB at 1 worker, up to 696 MB at 6, against the 768 MiB container limit.
+- **The tail is partition skew, not decode:** each fetch brings ≤ 1 MiB per partition, so all partitions drain at the same speed. p1, with 35% of the rows, finishes ~29 s after the smallest, alone on one goroutine at ~140–150k rows/s.
+
+**Scale-out, matched decode goroutines** (3 runs each):
+
+| Configuration | All 6 busy, rows/s | Total drain s | Overall rows/s |
+|---|---|---|---|
+| 1 consumer × 2 workers | 197k (195–202k) | 69.8 | 186k |
+| 2 consumers × 1 worker | 217k (211–233k) | 64.3 | 202k |
+
+Two processes beat two goroutines by ~10%. Matched goroutines, not matched resources: two processes also get twice the `GOMEMLIMIT`, twice the pending budget, two fetch sessions and two allocators. That fits the profile: in-process, decode is held back by memory and allocation, not by the fork-join design.
+
+**Live, 100k ×3, compose defaults** (`-decode-workers` = GOMAXPROCS):
+- 0 loss / 0 dup;
+- queryable p50 1.00–1.07 s, p99 2.05 / 2.67 / 2.84 s (Week 3: 2.06–2.75 s);
+- caught up 2–3 s after the generator stopped;
+- `decode_par` 1.4–1.5: at 100k the consumer keeps up, and a poll rarely holds every partition.
+- One run's generator verdict was FAIL (its receiver-side p99 1.27 s); storage stored every acked row.
+
+**Next storage levers (not taken yet):**
+- reuse and pre-size batch buffers (removes the doubling copies and the large allocations);
+- decode the OTLP wire format straight into RowBinary without building protobuf structs (most of the 54%);
+- then ClickHouse's insert side;
+- more partitions or better key spread for the tail.
 
 ## Reading the loop line (Week 3 instrumentation)
 
