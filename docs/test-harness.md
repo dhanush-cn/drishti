@@ -53,6 +53,39 @@
   for the live consumers). `kafkadump summary f.kd.gz` lists records per service and per metric
   with each metric's median interval. A dump is replayable byte for byte.
 
+## Memory headroom (3 Nov)
+
+The first Week 4 capture (`results-capture/`) had **48.7% of Locust requests failing with no flag
+on** (13 Oct: ~9%, nearly all `POST /prompt`). From the recording itself (docker_stats and the
+frontend's error logs):
+- `checkout` and `product-catalog` (upstream: 20M, `GOMEMLIMIT=16MiB`) were at 100% of their
+  memory limit from the first minute. Their CPU climbed from ~0.9 to 3.6 and 3.1 cores over two
+  hours: Go's garbage collector running continuously against a cap the live heap doesn't fit
+  under.
+- The Docker VM's 1-minute load average reached 32 on 16 threads. Errors followed from
+  starvation, not from any flag:
+  - DNS inside Docker timed out (`lookup astronomy-db on 127.0.0.11:53: i/o timeout`), so
+    product-catalog couldn't query its database and returned `Product Not Found`;
+  - calls to shipping timed out;
+  - checkout's telemetry exports timed out.
+- Also at their caps by the end: `frontend` (250M, 100%), `payment` (140M, 97–98%), `flagd`
+  (75M, 95%).
+- The collector (≤ 6% CPU) and all of Drishti stayed light.
+
+Why October didn't show it is not known; the October runs were 5–10 minutes, and this degrades
+over time.
+
+Fix: `deploy/otel-demo/compose.extras.yaml` (copy to `~/otel-demo/compose.extras.yaml`,
+which the Makefile loads last):
+- checkout and product-catalog: 128M with `GOMEMLIMIT=100MiB`;
+- flagd: 150M with `GOMEMLIMIT=120MiB`;
+- frontend: 512M;
+- payment: 256M.
+
+Limits only. `ad` (fixed JVM heap), `email` and `recommendation` (their memory-leak scenarios)
+keep upstream limits. The capture driver now refuses to record unless the baseline is healthy:
+Locust failures (excluding `POST /prompt`) under 5% and no container above 1.5 cores.
+
 ## Before every eval run
 
 1. `git -C ~/otel-demo diff src/flagd/demo.flagd.json` must be empty (all flags off)
