@@ -5,6 +5,16 @@ exporters:
       insecure: true
     timeout: 5s
 
+# span_metrics turns traces into per-service call, error and latency metrics.
+# Its default flush is every 60 s (collector-contrib 0.159.0), which would
+# hold back any error or latency alert by up to a minute. 5 s matches the
+# streaming detector's planned evaluation step (Week 4). Maps merge with the
+# base config, so this only sets the interval; dimensions and buckets stay
+# default.
+connectors:
+  span_metrics:
+    metrics_flush_interval: 5s
+
 service:
   pipelines:
     metrics:

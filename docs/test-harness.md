@@ -35,6 +35,24 @@
   that count them need `service.telemetry.logs.sampling.enabled: false`
   (`docs/loadgen.md` §13). (13 Oct)
 
+## Recording demo traffic (Week 4)
+
+- **span_metrics flush: 5 s.** The collector's `span_metrics` connector turns traces into per-service
+  call, error and latency metrics, and by default flushes them every 60 s (collector-contrib
+  0.159.0), too slow for alerts in seconds. The tracked extras file sets
+  `connectors.span_metrics.metrics_flush_interval: 5s`; `kafkadump summary` shows the interval
+  actually arriving (`span metrics interval … ~5 s`). Nothing else in the demo's telemetry changes.
+- **Flipping flags from scripts:** `scripts/demo-flag.py <flag> <variant>` (and `--show`) uses the
+  demo's own flag API (`/feature/api/read` and `/write`, as the demo's Cypress tests do), then waits
+  until flagd's file has the variant (the API writes asynchronously, ~0.3 s). `productCatalogFailure`
+  is switched by its targeting rule, not `defaultVariant`. The API rewrites the file (drops
+  `$schema`), so restore it with `git checkout` after a run. Restore through the API first if
+  flagd-ui is still running: it keeps flags in memory and would write its stale copy back.
+- **Recording:** `cmd/kafkadump dump -from T1 -to T2 -out f.kd.gz` writes every `otlp.logs` and
+  `otlp.metrics` record of the window (direct partition reads, no consumer group, so nothing moves
+  for the live consumers). `kafkadump summary f.kd.gz` lists records per service and per metric
+  with each metric's median interval. A dump is replayable byte for byte.
+
 ## Before every eval run
 
 1. `git -C ~/otel-demo diff src/flagd/demo.flagd.json` must be empty (all flags off)
