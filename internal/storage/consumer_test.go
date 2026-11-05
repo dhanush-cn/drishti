@@ -133,7 +133,8 @@ func TestRun_StoresEveryRecordOnceAcrossPartitions(t *testing.T) {
 	if d := dups(rows); len(d) > 0 {
 		t.Fatalf("duplicates: %v", d)
 	}
-	if q := e.ch.lastQuery; q["async_insert"] != "0" || !strings.HasPrefix(q["insert_deduplication_token"], topic+"-") {
+	if q := e.ch.lastQuery; q["async_insert"] != "0" || !strings.HasPrefix(q["insert_deduplication_token"], topic+"-") ||
+		q["deduplicate_blocks_in_dependent_materialized_views"] != "1" {
 		t.Fatalf("insert settings not sent: %v", q)
 	}
 }

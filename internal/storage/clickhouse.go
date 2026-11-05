@@ -33,6 +33,11 @@ type CH struct {
 //   - insert_deduplication_token: a retried insert of the same batch is
 //     dropped server-side (needs non_replicated_deduplication_window on the
 //     table). Covers the ambiguous case: timeout after the server wrote it.
+//   - deduplicate_blocks_in_dependent_materialized_views=1: the dropped
+//     retry is dropped from materialized views' tables too (drishti.logs_1m,
+//     which also needs its own window). On by default in 26.9; sent anyway,
+//     because with it off a retry is counted twice there while drishti.logs
+//     holds it once (scripts/mv-dedup-check.sh).
 //   - date_time_input_format is irrelevant for RowBinary (binary ticks).
 func insertQuery(table string, cols []string) string {
 	return "INSERT INTO " + table + " (" + strings.Join(cols, ", ") + ") FORMAT RowBinary"
@@ -45,6 +50,7 @@ func (c *CH) Insert(ctx context.Context, token string, body []byte) error {
 	q.Set("query", insertQuery(c.Table, LogColumns))
 	q.Set("async_insert", "0")
 	q.Set("insert_deduplication_token", token)
+	q.Set("deduplicate_blocks_in_dependent_materialized_views", "1")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/?"+q.Encode(), bytes.NewReader(body))
 	if err != nil {
 		return err
