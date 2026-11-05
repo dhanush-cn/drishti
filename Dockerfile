@@ -13,6 +13,11 @@ ARG GIT_DIRTY=unknown
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags="-s -w -X main.gitCommit=${GIT_COMMIT} -X main.gitDirty=${GIT_DIRTY}" \
     -o /out/loadgen ./cmd/loadgen
+# The detector stamps its version into every anomaly event (detector.version),
+# so an alert can be traced to the code that raised it.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w -X main.version=${GIT_COMMIT}" -o /out/detector ./cmd/detector
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/dashboard ./cmd/dashboard
 
 FROM gcr.io/distroless/static-debian12:nonroot AS loadgen
 ARG GIT_COMMIT=unknown
@@ -24,6 +29,19 @@ FROM gcr.io/distroless/static-debian12:nonroot AS storage
 COPY --from=build /out/storage /storage
 USER nonroot:nonroot
 ENTRYPOINT ["/storage"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS detector
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.revision=${GIT_COMMIT}
+COPY --from=build /out/detector /detector
+USER nonroot:nonroot
+ENTRYPOINT ["/detector"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS dashboard
+COPY --from=build /out/dashboard /dashboard
+EXPOSE 8088
+USER nonroot:nonroot
+ENTRYPOINT ["/dashboard"]
 
 # Last stage = default target, so a plain `docker build .` still gives the receiver.
 FROM gcr.io/distroless/static-debian12:nonroot AS receiver

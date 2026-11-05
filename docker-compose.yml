@@ -63,6 +63,55 @@ services:
     mem_limit: 768m
     networks:
       default: {}
+  detector:
+    image: drishti-detector:dev
+    build:
+      context: .
+      target: detector
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      DRISHTI_KAFKA_BROKERS: "kafka:29092"
+      # Names this instance in live.stats. More replicas split the input
+      # partitions by themselves (consumer group, nothing committed); give
+      # each its own name.
+      DRISHTI_DETECTOR_INSTANCE: "detector-1"
+      # Rebuild state from 15 min back on start (warm-up 10 min + the longest
+      # window 5 min): a restart detects again within seconds.
+      DRISHTI_DETECTOR_REWIND: "15m"
+      GOMEMLIMIT: "256MiB"
+      DRISHTI_PPROF_ADDR: ":6060"
+    ports:
+      - "127.0.0.1:16062:6060"
+    # Peak RSS replaying the whole 3 Nov demo recording (every partition in
+    # one process): 28 MiB. The rest is franz-go fetch buffers and headroom.
+    mem_limit: 384m
+    networks:
+      default: {}
+  dashboard:
+    image: drishti-dashboard:dev
+    build:
+      context: .
+      target: dashboard
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      DRISHTI_KAFKA_BROKERS: "kafka:29092"
+      DRISHTI_DASHBOARD_ADDR: ":8088"
+      GOMEMLIMIT: "128MiB"
+      DRISHTI_PPROF_ADDR: ":6060"
+    ports:
+      # Loopback only: the page shows service internals.
+      - "127.0.0.1:8088:8088"
+      - "127.0.0.1:16063:6060"
+    # 15 min of anomalies and one live snapshot a second: a few MiB.
+    mem_limit: 256m
+    networks:
+      default: {}
   receiver:
     image: drishti-receiver:dev
     build:
