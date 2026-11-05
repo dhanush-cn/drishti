@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drishti live</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #66707c; --line: #e3e6ea;
+  --open: #c2410c; --open-bg: #fff4ed; --ok: #15803d; --warn: #b45309; --spark: #2563eb;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1216; --panel: #171b21; --ink: #e6e9ed; --muted: #8b95a1; --line: #262c34;
+          --open: #fb923c; --open-bg: #2a1a10; --ok: #4ade80; --warn: #fbbf24; --spark: #60a5fa; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 1; }
+header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--ok); } .dot.off { background: var(--open); }
+#opencount { margin-left: auto; font-weight: 600; }
+#opencount.hot { color: var(--open); }
+main { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.3fr); gap: 16px; padding: 16px 20px; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 600; }
+.empty { color: var(--muted); padding: 18px 14px; }
+.anom { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.anom:last-child { border-bottom: 0; }
+.anom.open { background: var(--open-bg); border-left: 3px solid var(--open); }
+.anom.resolved { opacity: .62; }
+.anom .top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.anom .rule { font-weight: 650; }
+.anom .svc { font-family: var(--mono); font-size: 13px; }
+.anom .when { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.anom .series, .anom .ev { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.anom .tmpl { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+details summary { cursor: pointer; padding: 10px 14px; color: var(--muted); font-size: 13px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+th:first-child, td:first-child { text-align: left; }
+td.svc { font-family: var(--mono); font-size: 13px; }
+td .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; background: var(--open); color: #fff; font-size: 11px; text-align: center; font-family: system-ui, sans-serif; }
+td.err { color: var(--open); }
+canvas { display: block; }
+.wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Drishti</h1>
+  <span class="pill"><span id="conn" class="dot"></span><span id="connText">connecting</span></span>
+  <span class="pill" id="fresh"></span>
+  <span id="opencount">0 open</span>
+</header>
+<main>
+  <section>
+    <h2>Anomalies</h2>
+    <div id="open"><div class="empty">Nothing open.</div></div>
+    <details id="resolvedBox"><summary>Resolved in the last 15 min (<span id="rescount">0</span>)</summary><div id="resolved"></div></details>
+  </section>
+  <section>
+    <h2>Services, last 15 min</h2>
+    <div class="wrap">
+      <table>
+        <thead><tr><th>Service</th><th>Calls/s</th><th>Errors</th><th>Logs/s</th><th>Warn+/s</th><th>Calls/s, 15 min</th></tr></thead>
+        <tbody id="svcs"><tr><td colspan="6" class="empty">Waiting for live stats.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const KEEP_S = 15 * 60;
+const RULES = {
+  log_template_new: "New log template", log_template_spike: "Log line surge", log_error_spike: "Warnings and errors surge",
+  span_errors: "Error rate", span_slow: "Latency", span_traffic_surge: "Traffic surge", span_traffic_drop: "Traffic stopped",
+  container_memory_growth: "Memory climbing",
+};
+// Exposed for the headless test: what arrived when.
+const D = window.__drishti = { anomalies: new Map(), received: [] };
+const series = new Map();   // service -> Map(second -> {calls, errors, logs, warn})
+const covered = new Set();  // seconds some snapshot covered (a service absent in one of them had nothing)
+const lastOpen = new Map(); // service -> open anomalies (from the newest snapshot of each instance)
+const instOpen = new Map(); // instance -> {service: open}
+let maxRecordTS = 0;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const num = x => typeof x !== "number" || !isFinite(x) ? "–" : x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1) : x.toFixed(2);
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? s + " s ago" : s < 3600 ? Math.floor(s / 60) + " min ago" : Math.floor(s / 3600) + " h ago";
+}
+
+function evidence(a) {
+  const e = a.evidence || {}, w = e.window || "";
+  const p = e.log10_p ? ` · p ≈ 10<sup>${Math.round(e.log10_p)}</sup>` : "";
+  switch (a.rule) {
+    case "span_errors": return `${e.observed} of ${Math.round(e.calls)} calls failed in ${w} (usual ${(e.baseline_ratio * 100).toFixed(1)}%)${p}`;
+    case "span_slow": return `${e.observed} of ${Math.round(e.calls)} calls slow in ${w}; ${esc(e.detail || "")}${p}`;
+    case "span_traffic_drop": return `no calls in ${w}, ${num(e.expected)} expected${p}`;
+    case "container_memory_growth": return `${num(e.expected)} → ${num(e.observed)} MiB in ${w}; ${esc(e.detail || "")}`;
+    case "log_template_new": return `${e.observed} line${e.observed === 1 ? "" : "s"}, ${esc(e.detail || "")}`;
+    default: return `${e.observed} in ${w}, ${num(e.expected)} expected${p}`;
+  }
+}
+
+function seriesText(a) {
+  const s = a.series || {};
+  if (s["span.name"]) return `${esc(s["span.kind"] || "")} ${esc(s["span.name"])}`;
+  if (a.template) return `${esc(s.severity || "")} <span class="tmpl">${esc(a.template)}</span>`;
+  if (s.container) return `container ${esc(s.container)}`;
+  return esc(s.severity || "");
+}
+
+function card(a) {
+  const now = Date.now(), opened = Date.parse(a.opened_at);
+  const delay = Date.parse(a.detected_at) - Date.parse(a.evidence_at);
+  const when = a.event === "resolved" ? `resolved ${ago(now - Date.parse(a.detected_at))}` : `opened ${ago(now - opened)}`;
+  return `<div class="anom ${a.event === "resolved" ? "resolved" : "open"}" data-id="${esc(a.id)}" data-event="${esc(a.event)}">
+    <div class="top"><span class="rule">${RULES[a.rule] || esc(a.rule)}</span><span class="svc">${esc(a.service)}</span>
+    <span class="when" title="detected ${delay >= 0 ? (delay / 1000).toFixed(1) + " s after its newest evidence" : ""}">${when}</span></div>
+    <div class="series">${seriesText(a)}</div>
+    <div class="ev">${evidence(a)}</div></div>`;
+}
+
+function safeCard(a) {
+  try { return card(a); } catch (e) { console.error("card", a && a.id, e); return ""; }
+}
+
+function renderAnomalies() {
+  const all = [...D.anomalies.values()];
+  const open = all.filter(a => a.event !== "resolved").sort((x, y) => Date.parse(y.opened_at) - Date.parse(x.opened_at));
+  const res = all.filter(a => a.event === "resolved").sort((x, y) => Date.parse(y.detected_at) - Date.parse(x.detected_at));
+  $("open").innerHTML = open.length ? open.map(safeCard).join("") : '<div class="empty">Nothing open.</div>';
+  $("resolved").innerHTML = res.map(safeCard).join("");
+  $("rescount").textContent = res.length;
+  const oc = $("opencount");
+  oc.textContent = open.length + " open";
+  oc.className = open.length ? "hot" : "";
+}
+
+function rank(e) { return { opened: 0, updated: 1, resolved: 2 }[e] ?? 0; }
+function addAnomaly(a, live) {
+  const cur = D.anomalies.get(a.id);
+  if (cur && (rank(a.event) < rank(cur.event) || (rank(a.event) === rank(cur.event) && Date.parse(a.detected_at) <= Date.parse(cur.detected_at)))) return;
+  D.anomalies.set(a.id, a);
+  if (live) D.received.push({ id: a.id, event: a.event, replayed: !!a.replayed, detectedAt: Date.parse(a.detected_at), receivedAt: Date.now() });
+}
+
+function addLive(s) {
+  const sec = Math.floor(Date.parse(s.at) / 1000), per = Math.max(s.period_ms, 1) / 1000;
+  covered.add(sec);
+  maxRecordTS = Math.max(maxRecordTS, Date.parse(s.max_record_ts) || 0);
+  const open = {};
+  for (const [svc, v] of Object.entries(s.services || {})) {
+    if (!series.has(svc)) series.set(svc, new Map());
+    const m = series.get(svc), b = m.get(sec) || { calls: 0, errors: 0, logs: 0, warn: 0 };
+    b.calls += (v.calls || 0) / per; b.errors += (v.errors || 0) / per; b.logs += (v.logs || 0) / per; b.warn += (v.warn || 0) / per;
+    m.set(sec, b);
+    open[svc] = v.open_anomalies || 0;
+  }
+  instOpen.set(s.instance, open);
+}
+
+function spark(values, w, h) {
+  const c = document.createElement("canvas"), dpr = window.devicePixelRatio || 1;
+  c.width = w * dpr; c.height = h * dpr; c.style.width = w + "px"; c.style.height = h + "px";
+  const g = c.getContext("2d"); g.scale(dpr, dpr);
+  const mx = Math.max(...values, 1e-9);
+  g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--spark"); g.lineWidth = 1.2;
+  g.beginPath();
+  values.forEach((v, i) => { const x = i / (values.length - 1) * w, y = h - 1 - v / mx * (h - 2); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+  return c;
+}
+
+function renderServices() {
+  const nowS = Math.floor(Date.now() / 1000);
+  for (const k of covered) if (k < nowS - KEEP_S) covered.delete(k);
+  const open = {};
+  for (const m of instOpen.values()) for (const [svc, n] of Object.entries(m)) open[svc] = (open[svc] || 0) + n;
+  const rows = [];
+  for (const [svc, m] of series) {
+    for (const k of m.keys()) if (k < nowS - KEEP_S) m.delete(k);
+    // Rates: the mean over the seconds of the last 10 that a snapshot
+    // covered (not over 10, which would under-read right after a start).
+    // The spark line is per 10 s over 15 min.
+    let r = { calls: 0, errors: 0, logs: 0, warn: 0 }, n = 0;
+    for (let t = nowS - 10; t < nowS; t++) {
+      if (!covered.has(t)) continue;
+      n++;
+      const b = m.get(t);
+      if (b) { r.calls += b.calls; r.errors += b.errors; r.logs += b.logs; r.warn += b.warn; }
+    }
+    for (const k in r) r[k] /= Math.max(n, 1);
+    const sp = [];
+    for (let t = nowS - KEEP_S; t < nowS; t += 10) { let s = 0; for (let u = t; u < t + 10; u++) s += (m.get(u) || {}).calls || 0; sp.push(s / 10); }
+    rows.push({ svc, r, sp, open: open[svc] || 0 });
+  }
+  rows.sort((a, b) => (b.open - a.open) || (b.r.calls - a.r.calls) || (b.r.logs - a.r.logs) || a.svc.localeCompare(b.svc));
+  const tb = $("svcs");
+  if (!rows.length) return;
+  tb.innerHTML = "";
+  for (const x of rows) {
+    const tr = document.createElement("tr");
+    const err = x.r.calls > 0 ? x.r.errors / x.r.calls * 100 : 0;
+    tr.innerHTML = `<td class="svc">${esc(x.svc)}${x.open ? `<span class="badge">${x.open}</span>` : ""}</td>
+      <td>${num(x.r.calls)}</td><td class="${err >= 1 ? "err" : ""}">${x.r.calls > 0 ? err.toFixed(1) + "%" : "–"}</td>
+      <td>${num(x.r.logs)}</td><td>${num(x.r.warn)}</td><td></td>`;
+    tr.lastElementChild.appendChild(spark(x.sp, 140, 22));
+    tb.appendChild(tr);
+  }
+}
+
+function renderFresh() {
+  $("fresh").textContent = maxRecordTS ? `telemetry ${((Date.now() - maxRecordTS) / 1000).toFixed(1)} s behind` : "";
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.addEventListener("init", ev => {
+    const s = JSON.parse(ev.data);
+    D.anomalies.clear(); series.clear(); instOpen.clear(); covered.clear();
+    (s.anomalies || []).forEach(a => addAnomaly(a, false));
+    (s.live || []).forEach(addLive);
+    $("conn").className = "dot on"; $("connText").textContent = "live";
+    renderAnomalies(); renderServices(); renderFresh();
+  });
+  es.addEventListener("anomaly", ev => { addAnomaly(JSON.parse(ev.data), true); renderAnomalies(); });
+  es.addEventListener("live", ev => { addLive(JSON.parse(ev.data)); });
+  es.onerror = () => { $("conn").className = "dot off"; $("connText").textContent = "reconnecting"; };
+}
+connect();
+setInterval(() => { renderServices(); renderFresh(); }, 1000);
+setInterval(renderAnomalies, 5000); // relative times
+</script>
+</body>
+</html>
