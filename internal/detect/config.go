@@ -51,6 +51,9 @@ type Config struct {
 	// A traffic drop is only judged for series with calls in at least this
 	// share of their baseline buckets: 0.9.
 	DropMinActive float64
+	// Dispersion: judge counts and ratios against each series' own
+	// variance-to-mean ratio (quasi-Poisson) instead of assuming Poisson.
+	Dispersion bool
 
 	// Lifecycle: an anomaly is "resolved" after ResolveAfter without firing;
 	// while open, an "updated" event goes out every UpdateEvery.
@@ -95,6 +98,7 @@ func DefaultConfig() Config {
 		MinSlowRatio:   0.01,
 		MinSlowCalls:   50,
 		DropMinActive:  0.9,
+		Dispersion:     true,
 		ResolveAfter:   60 * time.Second,
 		UpdateEvery:    30 * time.Second,
 		NewWarnCount:   2,

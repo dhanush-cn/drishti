@@ -90,7 +90,7 @@ func (s *Shard) evaluate(sr *series, b, age int64) []firing {
 		case kindTemplate, kindErrorLog:
 			obs := sr.count.sum(b, n)
 			exp := math.Max(sr.base.mean(), floor) * float64(n)
-			if ev, ok := s.countTest(obs, exp, w); ok {
+			if ev, ok := s.countTest(obs, exp, s.dispersion(sr), w); ok {
 				rule := RuleTemplateSpike
 				if sr.kind == kindErrorLog {
 					rule = RuleErrorLogSpike
@@ -99,13 +99,14 @@ func (s *Shard) evaluate(sr *series, b, age int64) []firing {
 			}
 		case kindSpan:
 			calls := sr.count.sum(b, n)
+			phi := s.dispersion(sr)
 			// Errors, as a share of calls.
 			if errs := sr.errors.sum(b, n); errs > 0 {
 				p0 := s.cfg.MinErrorRatio
 				if m := sr.base.mean(); m > 0 {
 					p0 = math.Max(sr.baseErr.mean()/m, p0)
 				}
-				if ev, ok := s.ratioTest(errs, calls, p0, w); ok {
+				if ev, ok := s.ratioTest(errs, calls, p0, s.ratioDispersion(sr.errRes, sr.errVar), w); ok {
 					keep(RuleSpanErrors, ev, from)
 				}
 			}
@@ -115,7 +116,7 @@ func (s *Shard) evaluate(sr *series, b, age int64) []firing {
 			}
 			// Traffic: a surge by count, a drop as "silent where traffic was due".
 			exp := math.Max(sr.base.mean(), floor) * float64(n)
-			if ev, ok := s.countTest(calls, exp, w); ok {
+			if ev, ok := s.countTest(calls, exp, phi, w); ok {
 				keep(RuleTrafficSurge, ev, from)
 			}
 			// Only for steady traffic: bursty series (long-lived streams that
@@ -151,25 +152,58 @@ func (s *Shard) evaluate(sr *series, b, age int64) []firing {
 // countTest: Poisson upper tail of obs against exp, with the minimum count
 // and ratio guards (a 1.3x rise in a series that does thousands per window
 // is "significant" and meaningless).
-func (s *Shard) countTest(obs, exp float64, w time.Duration) (Evidence, bool) {
-	k := int(math.Round(obs))
-	if k < s.cfg.MinCount || obs < s.cfg.MinRatio*exp {
+func (s *Shard) countTest(obs, exp, phi float64, w time.Duration) (Evidence, bool) {
+	if int(math.Round(obs)) < s.cfg.MinCount || obs < s.cfg.MinRatio*exp {
 		return Evidence{}, false
 	}
-	lp := log10PoissonUpper(k, exp)
+	// Quasi-Poisson: a series whose events come in clumps (one order converts
+	// every cart item at once) has variance phi times its mean; counting in
+	// clumps of phi makes it Poisson again.
+	lp := log10PoissonUpper(int(math.Floor(obs/phi+1e-9)), exp/phi)
 	if lp >= s.cfg.Log10Alpha {
 		return Evidence{}, false
 	}
-	return Evidence{Window: w.String(), Observed: obs, Expected: round(exp), Log10P: round(lp)}, true
+	ev := Evidence{Window: w.String(), Observed: obs, Expected: round(exp), Log10P: round(lp)}
+	if phi > 1 {
+		ev.Detail = fmt.Sprintf("dispersion %.3g", phi)
+	}
+	return ev, true
+}
+
+// ratioDispersion: how much more a series' error (or slow) counts vary per
+// bucket than a binomial at its baseline ratio would (at least 1). Not the
+// call count's dispersion: a browser fetches images in clumps, but in
+// normal times they aren't slow together; one checkout order's calls are.
+func (s *Shard) ratioDispersion(res, v ewma) float64 {
+	if !s.cfg.Dispersion || v.w == 0 || v.mean() <= 0 {
+		return 1
+	}
+	return math.Max(1, res.mean()/v.mean())
+}
+
+// dispersion is a series' variance-to-mean ratio per bucket, from its
+// baseline (at least 1: Poisson). 1 when disabled or not yet known.
+func (s *Shard) dispersion(sr *series) float64 {
+	if !s.cfg.Dispersion || sr.base.w == 0 {
+		return 1
+	}
+	m := sr.base.mean()
+	if m <= 0 {
+		return 1
+	}
+	return math.Max(1, (sr.base2.mean()-m*m)/m)
 }
 
 // ratioTest: binomial upper tail of k events in n calls against ratio p0.
-func (s *Shard) ratioTest(k, n, p0 float64, w time.Duration) (Evidence, bool) {
+// Calls in clumps fail or slow down in clumps too: k and n are counted in
+// clumps of phi, as in countTest.
+func (s *Shard) ratioTest(k, n, p0, phi float64, w time.Duration) (Evidence, bool) {
 	ki, ni := int(math.Round(k)), int(math.Round(n))
 	if ki < s.cfg.MinCount || ni <= 0 || k/n < s.cfg.MinRatio*p0 {
 		return Evidence{}, false
 	}
-	lp := log10BinomialUpper(ki, max(ni, ki), p0)
+	kq, nq := int(math.Floor(k/phi+1e-9)), int(math.Ceil(n/phi-1e-9))
+	lp := log10BinomialUpper(kq, max(nq, kq), p0)
 	if lp >= s.cfg.Log10Alpha {
 		return Evidence{}, false
 	}
@@ -181,16 +215,18 @@ func (s *Shard) ratioTest(k, n, p0 float64, w time.Duration) (Evidence, bool) {
 // baseline's share above it (at least MinSlowRatio). Coarse span_metrics
 // buckets (…, 100, 200, 400, 800 ms, …) are fine for this: it asks "are many
 // more calls in the tail than usual", not "what is p99 now".
-func (s *Shard) slowTest(sr *series, b int64, n int, w time.Duration) (Evidence, bool) {
+// slowEdge: the baseline histogram's p99 bucket and the baseline share of
+// calls above it (floored). ok is false while there is no usable baseline.
+func (s *Shard) slowEdge(sr *series) (edge int, p0 float64, ok bool) {
 	if len(sr.baseH) == 0 || sr.seenCalls < s.cfg.MinSlowCalls {
-		return Evidence{}, false
+		return 0, 0, false
 	}
 	total := 0.0
 	for _, e := range sr.baseH {
 		total += e.mean()
 	}
 	if total <= 0 {
-		return Evidence{}, false
+		return 0, 0, false
 	}
 	edge, acc := len(sr.baseH)-1, 0.0
 	for i, e := range sr.baseH {
@@ -201,13 +237,20 @@ func (s *Shard) slowTest(sr *series, b int64, n int, w time.Duration) (Evidence,
 		}
 	}
 	if edge >= len(sr.baseH)-1 {
-		return Evidence{}, false // p99 already in the overflow bucket: nothing above it
+		return 0, 0, false // p99 already in the overflow bucket: nothing above it
 	}
 	baseSlow := 0.0
 	for _, e := range sr.baseH[edge+1:] {
 		baseSlow += e.mean()
 	}
-	p0 := math.Max(baseSlow/total, s.cfg.MinSlowRatio)
+	return edge, math.Max(baseSlow/total, s.cfg.MinSlowRatio), true
+}
+
+func (s *Shard) slowTest(sr *series, b int64, n int, w time.Duration) (Evidence, bool) {
+	edge, p0, ok := s.slowEdge(sr)
+	if !ok {
+		return Evidence{}, false
+	}
 	slow, calls := 0.0, 0.0
 	for i, r := range sr.hist {
 		v := r.sum(b, n)
@@ -219,9 +262,13 @@ func (s *Shard) slowTest(sr *series, b int64, n int, w time.Duration) (Evidence,
 	if calls == 0 {
 		return Evidence{}, false
 	}
-	ev, ok := s.ratioTest(slow, calls, p0, w)
+	phi := s.ratioDispersion(sr.slowRes, sr.slowVar)
+	ev, ok := s.ratioTest(slow, calls, p0, phi, w)
 	if ok {
 		ev.Detail = fmt.Sprintf("slow = above %gms (baseline p99 bucket edge)", sr.bounds[edge])
+		if phi > 1 {
+			ev.Detail += fmt.Sprintf("; dispersion %.3g", phi)
+		}
 	}
 	return ev, ok
 }
@@ -390,12 +437,31 @@ func (s *Shard) foldBaseline(sr *series, b int64) {
 	}
 	calls := sr.count.get(x)
 	sr.base.update(calls, s.decay)
+	sr.base2.update(calls*calls, s.decay)
 	if sr.kind == kindSpan {
 		on := 0.0
 		if calls > 0 {
 			on = 1
 		}
 		sr.active.update(on, s.decay)
+		// Overdispersion, at the ratios the tests would use now.
+		if calls > 0 {
+			p := s.cfg.MinErrorRatio
+			if m := sr.base.mean(); m > 0 {
+				p = math.Max(sr.baseErr.mean()/m, p)
+			}
+			k := sr.errors.get(x)
+			sr.errRes.update((k-p*calls)*(k-p*calls), s.decay)
+			sr.errVar.update(calls*p*(1-p), s.decay)
+			if edge, p, ok := s.slowEdge(sr); ok {
+				k := 0.0
+				for i := edge + 1; i < len(sr.hist); i++ {
+					k += sr.hist[i].get(x)
+				}
+				sr.slowRes.update((k-p*calls)*(k-p*calls), s.decay)
+				sr.slowVar.update(calls*p*(1-p), s.decay)
+			}
+		}
 		sr.baseErr.update(sr.errors.get(x), s.decay)
 		for i := range sr.baseH {
 			v := sr.hist[i].get(x)

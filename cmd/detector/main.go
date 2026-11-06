@@ -64,6 +64,7 @@ func main() {
 		minErr    = flag.Float64("min-error-ratio", envFloat("DRISHTI_DETECT_MIN_ERROR_RATIO", def.MinErrorRatio), "floor of a span's baseline error ratio")
 		minSlow   = flag.Float64("min-slow-ratio", envFloat("DRISHTI_DETECT_MIN_SLOW_RATIO", def.MinSlowRatio), "floor of a span's baseline share of slow calls")
 		slowCalls = flag.Float64("min-slow-calls", envFloat("DRISHTI_DETECT_MIN_SLOW_CALLS", def.MinSlowCalls), "calls a latency baseline needs behind it")
+		disp      = flag.Bool("dispersion", envBool("DRISHTI_DETECT_DISPERSION", def.Dispersion), "judge counts against each series' own variance-to-mean ratio (quasi-Poisson), not Poisson")
 		dropAct   = flag.Float64("drop-min-active", envFloat("DRISHTI_DETECT_DROP_MIN_ACTIVE", def.DropMinActive), "traffic drops are judged only for spans with calls in this share of baseline buckets")
 		resolve   = flag.Duration("resolve-after", envDur("DRISHTI_DETECT_RESOLVE_AFTER", def.ResolveAfter), "an anomaly resolves after this long without firing")
 		update    = flag.Duration("update-every", envDur("DRISHTI_DETECT_UPDATE_EVERY", def.UpdateEvery), "an open anomaly is re-sent this often")
@@ -96,6 +97,7 @@ func main() {
 	cfg.Log10Alpha, cfg.MinCount, cfg.MinRatio = *alpha, *minCount, *minRatio
 	cfg.HalfLife, cfg.WarmUp, cfg.FloorHistory = *halfLife, *warmUp, *floorHist
 	cfg.MinErrorRatio, cfg.MinSlowRatio, cfg.MinSlowCalls, cfg.DropMinActive = *minErr, *minSlow, *slowCalls, *dropAct
+	cfg.Dispersion = *disp
 	cfg.ResolveAfter, cfg.UpdateEvery = *resolve, *update
 	cfg.NewWarnCount, cfg.NewWarnWithin = *warnN, *warnIn
 	cfg.MemWindow, cfg.MemMinR2, cfg.MemTimeToLimit, cfg.MemNearLimit = *memWin, *memR2, *memTTL, *memNear
@@ -244,6 +246,15 @@ func envInt(k string, def int) int {
 	if v := os.Getenv(k); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func envBool(k string, def bool) bool {
+	if v := os.Getenv(k); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def

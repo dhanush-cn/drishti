@@ -442,3 +442,164 @@ func TestMemoryGrowth_Guards(t *testing.T) {
 		s.none("+0.2 MiB/min at 91%: under 2% of the limit in the window")
 	})
 }
+
+// Calls that come in clumps (an order converts each of its 6 cart items at
+// once, one order every 30 s): a burst of three orders in one bucket is
+// ordinary for this series, a sustained rise is not. Poisson would call the
+// burst 10^-8 surprising (capture B: 11 of 15 false alarms were this).
+func TestDispersion_ClumpedCalls(t *testing.T) {
+	order := func(s *sim, n float64) {
+		s.calls("checkout", "Convert", "CLIENT", "STATUS_CODE_UNSET", 6*n)
+	}
+	baseline := func() *sim {
+		s := newSim(t, DefaultConfig())
+		s.run(20*time.Minute, func(i int) {
+			if i%6 == 0 {
+				order(s, 1)
+			} else {
+				order(s, 0)
+			}
+		})
+		s.none("one order every 30 s")
+		return s
+	}
+	t.Run("burst of orders", func(t *testing.T) {
+		s := baseline()
+		s.run(time.Minute, func(i int) {
+			if i == 0 {
+				order(s, 3)
+			} else {
+				order(s, 0)
+			}
+		})
+		s.none("three orders at once")
+	})
+	t.Run("sustained surge", func(t *testing.T) {
+		s := baseline()
+		s.run(2*time.Minute, func(int) { order(s, 1) })
+		e := s.opened("an order every bucket (6x)", RuleTrafficSurge, "checkout")
+		if !strings.Contains(e.Evidence.Detail, "dispersion") {
+			t.Errorf("detail %q: want the dispersion it was judged with", e.Evidence.Detail)
+		}
+	})
+}
+
+// Failures that come per order (one order in ten fails, all 6 of its calls)
+// vary far more than a binomial at 10%: two failed orders at once are
+// ordinary, every order failing is not.
+func TestDispersion_FailuresPerOrder(t *testing.T) {
+	n := 0
+	order := func(s *sim, fail bool) {
+		if fail {
+			s.calls("checkout", "Charge", "CLIENT", "STATUS_CODE_ERROR", 6)
+		} else {
+			s.calls("checkout", "Charge", "CLIENT", "STATUS_CODE_UNSET", 6)
+		}
+	}
+	baseline := func() *sim {
+		s := newSim(t, DefaultConfig())
+		s.calls("checkout", "Charge", "CLIENT", "STATUS_CODE_ERROR", 0) // both series exist from the start
+		s.run(30*time.Minute, func(i int) {
+			if i%6 == 0 {
+				n++
+				order(s, n%10 == 0)
+			}
+		})
+		s.none("one order in ten failing")
+		return s
+	}
+	t.Run("two failed orders", func(t *testing.T) {
+		s := baseline()
+		s.run(time.Minute, func(i int) {
+			if i == 0 {
+				order(s, true)
+				order(s, true)
+			}
+		})
+		s.none("two failed orders at once")
+	})
+	t.Run("every order fails", func(t *testing.T) {
+		s := baseline()
+		s.run(5*time.Minute, func(i int) {
+			if i%6 == 0 {
+				order(s, true)
+			}
+		})
+		s.opened("every order failing", RuleSpanErrors, "checkout")
+	})
+}
+
+// A browser fetches a page's 12 images at once (calls clumped), but in
+// normal times they aren't slow together: when they all turn slow it must
+// fire on the shortest window, not wait for the call count's dispersion.
+func TestDispersion_SlowIsNotCallClumping(t *testing.T) {
+	s := newSim(t, DefaultConfig())
+	page := func(slow bool) {
+		h := []uint64{0, 12, 0, 0, 0, 0, 0}
+		if slow {
+			h = []uint64{0, 0, 0, 0, 0, 12, 0}
+		}
+		s.calls("frontend-proxy", "GET", "SERVER", "STATUS_CODE_UNSET", 12)
+		s.hist("frontend-proxy", "GET", "SERVER", h)
+	}
+	s.run(20*time.Minute, func(i int) {
+		if i%3 == 0 {
+			page(false)
+		} else {
+			s.calls("frontend-proxy", "GET", "SERVER", "STATUS_CODE_UNSET", 0)
+			s.hist("frontend-proxy", "GET", "SERVER", make([]uint64, 7))
+		}
+	})
+	s.none("a page every 15 s")
+	s.run(30*time.Second, func(i int) {
+		if i%3 == 0 {
+			page(true)
+		} else {
+			s.calls("frontend-proxy", "GET", "SERVER", "STATUS_CODE_UNSET", 0)
+			s.hist("frontend-proxy", "GET", "SERVER", make([]uint64, 7))
+		}
+	})
+	e := s.opened("every image slow", RuleSpanSlow, "frontend-proxy")
+	if e.Evidence.Window != "30s" {
+		t.Errorf("fired on the %s window: want 30s (slowness isn't clumped here, only calls are)", e.Evidence.Window)
+	}
+}
+
+// The slow-share dispersion is learned from how slow calls arrive: the same
+// 0.5% share, all of an order's 6 calls at once vs one call at a time.
+func TestDispersion_SlowShareLearned(t *testing.T) {
+	learn := func(slowAt func(x int64) float64) float64 {
+		cfg := DefaultConfig()
+		cfg.HalfLife = 2 * time.Hour // long memory: rare clumps
+		s := NewShard(cfg, TopicMetrics, 0, "t")
+		sr := s.get("span|checkout|POST|CLIENT", func() *series { return &series{kind: kindSpan} }, 0)
+		sr.bounds = testBounds
+		for range len(testBounds) + 1 {
+			sr.hist = append(sr.hist, newRing(s.ringN))
+			sr.baseH = append(sr.baseH, ewma{})
+		}
+		for x := int64(0); x < 6000; x++ {
+			slow := slowAt(x)
+			sr.count.add(x, 6)
+			sr.hist[1].add(x, 6-slow)
+			sr.hist[5].add(x, slow)
+			s.foldBaseline(sr, x+int64(s.ringN)-1)
+		}
+		return s.ratioDispersion(sr.slowRes, sr.slowVar)
+	}
+	clumped := learn(func(x int64) float64 {
+		if x%200 == 7 {
+			return 6
+		}
+		return 0
+	})
+	spread := learn(func(x int64) float64 {
+		if x%33 == 7 {
+			return 1
+		}
+		return 0
+	})
+	if clumped < 2 || spread > 1.5 { // clumped: ~3 in theory (6 calls vs a 1% floor)
+		t.Fatalf("slow-share dispersion: clumped %.2f (want > 2), spread %.2f (want ~1)", clumped, spread)
+	}
+}

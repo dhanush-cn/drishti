@@ -101,6 +101,7 @@ type series struct {
 	// counts (template, error log, span calls)
 	count ring
 	base  ewma
+	base2 ewma // of the squared bucket count: with base, the series' dispersion
 
 	// template
 	template   string
@@ -109,13 +110,17 @@ type series struct {
 	occurrence int64
 
 	// span
-	active    ewma // share of baseline buckets with any calls (traffic-drop guard)
-	errors    ring
-	baseErr   ewma
-	hist      []ring // per histogram bucket
-	baseH     []ewma
-	bounds    []float64
-	seenCalls float64 // calls folded into the baseline so far (latency rule needs MinSlowCalls)
+	active  ewma // share of baseline buckets with any calls (traffic-drop guard)
+	errors  ring
+	baseErr ewma
+	// Overdispersion of the error and slow counts against a binomial at the
+	// baseline ratio: ewma of (k - p n)^2 and of n p (1-p) per bucket.
+	errRes, errVar   ewma
+	slowRes, slowVar ewma
+	hist             []ring // per histogram bucket
+	baseH            []ewma
+	bounds           []float64
+	seenCalls        float64 // calls folded into the baseline so far (latency rule needs MinSlowCalls)
 
 	// memory
 	mem   []memSample
