@@ -3,9 +3,10 @@
 Week 4 milestone: **flip a demo failure flag → an anomaly appears in seconds**, on the dashboard
 and on the `anomalies` topic that the Week 5 agent will read.
 
-> Status (4 Nov): built and tuned on one recording of the demo (capture 2, 3–4 Nov). Every number
-> below is measured, and says where. **Tuned and scored on the same recording**, so the results in
-> section 10 are an upper bound until run B validates them on fresh traffic.
+> Status (5 Nov): built, tuned on capture 2 (3–4 Nov), and run live on fresh traffic (run B, 5 Nov).
+> Every number below is measured, and says where. Run B found one modelling error (clumped counts,
+> section 10.2), fixed afterwards and re-scored on both recordings: **no recording is held out any
+> more**, so the next demo recording is the next real test.
 
 ## 0. Decisions
 
@@ -13,7 +14,7 @@ and on the `anomalies` topic that the Week 5 agent will read.
 |---|---|---|
 | D1 | Signals the detector reads | Logs + span metrics (from traces) + container memory |
 | D2 | Demo collector change | `span_metrics` flush every 5 s (patch 28) |
-| D3 | Detection method | 7 count rules on one statistical primitive + 1 memory trend rule. No ML |
+| D3 | Detection method | 7 count rules on one statistical primitive (quasi-Poisson / overdispersed binomial) + 1 memory trend rule. No ML |
 | D4 | Detector state | In memory, one shard per input partition; rewind 15 min of Kafka on assignment; no commits |
 | D5 | Delivery | `anomalies` topic, JSON v1, deterministic IDs, at-least-once; consumers dedupe by ID |
 | D6 | Dashboard transport | Server-Sent Events, live data via Kafka `live.stats`; no Redis |
@@ -83,6 +84,14 @@ Every count rule asks: *in this window I observed k, the baseline expects μ: ho
 
 - **Counts:** Poisson upper tail `P(X ≥ k | μ)`; for a drop, `P(X = 0 | μ)`.
 - **Ratios** (errors or slow calls / calls): binomial upper tail against the baseline ratio.
+- **Clumps (dispersion).** Demo traffic comes in clumps: one checkout order converts every cart item
+  at once, a page load fetches its images together. Each series learns how much more it varies than
+  the test assumes, and the test counts in clumps of that size (quasi-Poisson):
+  - counts: φ = variance / mean of the bucket count; test `P(X ≥ k/φ | μ/φ)`;
+  - ratios: φ = mean (k − p·n)² / mean n·p·(1 − p) per bucket, the error (or slow) count's own
+    excess over a binomial; test k/φ of n/φ. Learned separately from the call count's φ: images
+    arrive in clumps but aren't slow together in normal times, one order's calls fail together.
+  φ ≥ 1, learned with the baseline (same lag, taint and half-life). Off with `-dispersion=false`.
 - **A window fires** when log10 p < **−6**, k ≥ **3**, and observed ≥ **3×** expected. The ratio
   guard matters on busy series: +10% on 1000 calls/bucket is "significant" and meaningless.
 - **Windows: 30 s, 2 min, 5 min**, all evaluated at every 5 s bucket boundary. The short window
@@ -222,7 +231,11 @@ ClickHouse in a scratch database.
   the profile. The week's target is 100k log rows/s; shards run in parallel on top of that.
 - **Replay of capture 2** (one goroutine, gunzip + logs + metrics): 124k records, 255k log lines and
   526k metric points in 7.3 s.
-- Live throughput beside storage at 100k rows/s is measured in run B (consumer lag stays flat).
+- **Live, laptop (run B):** load generator at 100k log rows/s for 2 min beside storage (PASS,
+  achieved 100,000/s): the detector's lag stayed at **0 records** in every 10 s line, loop busy
+  77–83%, 1.47 cores mean (max 2.36), memory max 206 MiB. Little headroom on one detector at this
+  rate: a second instance splits the partitions.
+- **During the demo run:** detector 0.01 cores mean, 108 MiB max; dashboard 10 MiB.
 
 ## 9. How it's tuned and evaluated
 
@@ -235,12 +248,73 @@ ClickHouse in a scratch database.
    anomaly opens on a service the flag affects (section 1, fixed before tuning) between flag-on and
    90 s after flag-off. Anything opened in quiet time (the baseline, and from 2 min after each
    flag-off to the next flag-on) is a false alarm.
-3. **Validate live (run B), on fresh traffic.**
+3. **Validate live (run B, 5 Nov), on fresh traffic:** the stack running as deployed, a 30 min
+   no-flag baseline, the 13 scenarios, a detector restart after scenario 3, then 100k rows/s for
+   2 min. Its inputs were recorded too (`capture-b.kd.gz`), so changes made after it are re-scored on
+   both recordings.
 
-## 10. Results on capture 2 (tuned on the same data)
+## 10. Results
 
-**12 of 13 scenarios detected. 1 false alarm in 0.54 h of quiet time (1.9/h).** Replays are
-deterministic: two runs give byte-identical output.
+### 10.1 Run B, live on fresh traffic (5 Nov, laptop on AC, healthy demo)
+
+As deployed (patches 30–37, Poisson tests). **10 of 13 detected; 11 false alarms in 0.72 h of quiet
+time (15.3/h).** A replay of run B's own recording through the same code gives the same 10/13 and
+15 false alarms, so the live path (Kafka, rewind, wall-clock tick) behaves like the replay.
+
+| # | Flag | Flag → alert (wall clock) | First anomaly |
+|---|---|---|---|
+| 1 | adFailure | 24 s | new ERROR template, frontend "API request failed" |
+| 2 | cartFailure | 149 s | surge, checkout → currency (not the fault; the fault's own new cart template came later) |
+| 3 | paymentFailure | **missed** | the flag barely acted: 1 of ~11 charges failed in 4 min (payment's flagd stream was erroring) |
+| 4 | paymentUnreachable | 15 s | new ERROR template, frontend "Checkout failed to place order" |
+| 5 | adHighCpu | 19 s | template spike, ad "High CPU-Load problempattern enabled" |
+| 6 | adManualGc | 15 s | new WARN template, ad "…performing a manual gc now" |
+| 7 | productCatalogLockContention | 44 s | slow calls, frontend-proxy |
+| 8 | imageSlowLoad | 23 s | slow calls, frontend-proxy |
+| 9 | productCatalogFailure | 6 s | template spike, frontend |
+| 10 | intlShippingSlowdown | **missed** | one INFO line per order: nothing to count |
+| 11 | loadGeneratorFloodHomepage | 15 s | template spike, frontend-proxy |
+| 12 | recommendationCacheFailure | 5 s | template spike, recommendation |
+| 13 | emailMemoryLeak | **missed** | grew ~1.2 MiB/min (half capture 2's rate): limit ~22 min away, beyond the 15 min rule |
+
+- **Evidence → alert** (Drishti's own latency, 121 live opened anomalies): p50 2.3 s, p90 4.2 s,
+  **p99 4.5 s**, max 4.7 s (target p99 < 10 s): the bucket end, the 2 s grace and the 1 s poll.
+- **Alert → dashboard** (an SSE client holding `/events` open): p50 8 ms, **p99 14 ms**, max 18 ms
+  (target p99 < 2 s); all 121 opened anomalies arrived.
+- **Restart:** `docker compose restart detector` after scenario 3 took 0.4 s; with the 15 min rewind
+  it detected scenario 4 at 14 s. (It re-emitted nothing: nothing fired in the part of the rewind past
+  its warm-up. Re-emission under the same IDs is covered by the kfake test.)
+- **logs_1m on run B's data:** 2,129 (service, severity, minute) keys, **0 mismatched** with
+  `drishti.logs` (267,166 lines each). One service's per-minute lines and errors over the run: 8 ms /
+  40,960 rows read on `logs`, 4 ms / 2,440 rows on `logs_1m` (medians of 5). `mv-dedup-check.sh`
+  passed on the laptop's ClickHouse 26.8.21.
+
+### 10.2 What run B found: clumped counts
+
+9 of the 10 non-flagd false alarms were surges and slow calls on checkout's CLIENT calls (`POST`,
+`CurrencyService/Convert`) and frontend-web's `GET`, e.g. 18 calls in 30 s vs 3.1 expected. Those calls
+come in clumps (one order = one call per cart item), so a big-cart order is a 3–6× burst that Poisson
+calls 10⁻⁸ surprising. Capture 2 had fewer big orders and hid it. Fix: the dispersion terms in section 3.
+Applying the call count's dispersion to the slow-call test as well removed them too, but delayed
+imageSlowLoad from ~22 s to ~2 min (images arrive in clumps but aren't slow together); the ratio tests
+therefore learn their own dispersion.
+
+### 10.3 Both recordings, current code (replay)
+
+| | Capture 2 (3–4 Nov) | Run B (5 Nov) |
+|---|---|---|
+| Detected | **12/13** | **10/13** |
+| False alarms | 1 in 0.54 h (1.9/h) | 2 in 0.72 h (2.8/h) |
+| Median time to first related anomaly | 24 s | 16 s |
+| Poisson tests (as run live) | 12/13, 1 | 10/13, 15 |
+
+Run B's misses are a flag that barely acted, a fault with one log line per order, and a leak too slow
+for the 15 min rule. None is a threshold away. Its 2 false alarms: the flagd `EventStream` drop (both
+recordings) and one checkout `POST` slow call.
+
+### 10.4 Capture 2 by scenario
+
+Replays are deterministic: two runs give byte-identical output.
 
 | # | Flag | First anomaly (scorer) | First fault signal (by hand) |
 |---|---|---|---|
@@ -256,31 +330,31 @@ deterministic: two runs give byte-identical output.
 | 10 | intlShippingSlowdown | **missed** | one INFO line in 4 min: nothing to count |
 | 11 | loadGeneratorFloodHomepage | 11 s, traffic surge, frontend `GET /` | same |
 | 12 | recommendationCacheFailure | 5 s, template spike, recommendation "get_product_list: cache <*>" | same |
-| 13 | emailMemoryLeak | 105 s, traffic surge, checkout → currency (post-wake noise) | **155 s**, memory growth, email (+2 MiB/min, limit in 14 min) |
+| 13 | emailMemoryLeak | 155 s, memory growth, email (+2 MiB/min, limit in 14 min) | same (with Poisson tests a post-wake checkout surge came first, at 105 s) |
 
 Times are from the flag write, so they include flagd propagation and the demo's telemetry delays
 (section 1). The false alarm is a `span_traffic_drop` on flagd's `EventStream`, a long-lived stream
 whose calls are reported when they end.
 
-**Sensitivity** (each row changes one setting; same capture, same scorer):
+### 10.5 Sensitivity (current code; each row changes one setting; same scorer)
 
-| Setting | Detected | False alarms in 0.54 h |
+Detected, false alarms, median time to the first related anomaly:
+
+| Setting | Capture 2 (0.54 h quiet) | Run B (0.72 h quiet) |
 |---|---|---|
-| defaults (α 10⁻⁶, ratio 3, windows 30 s/2 m/5 m, half-life 10 min) | 12/13 | 1 |
-| log10 α −5 / −7 / −8 | 12/13 | 2 / 1 / 1 |
-| log10 α −4 | 13/13 | 5 |
-| min-ratio 2.5 / 4 / 5 | 13/13 / 12/13 / 12/13 | 1 / 1 / 1 |
-| min-ratio 2 | 13/13 | 3 |
-| min-count 2 / 5 | 12/13 | 1 |
-| any one or two of the three windows | 12/13 | 0–1 |
-| half-life 5 min / 20 min | 13/13 / 12/13 | 2 / 1 |
-| min-error-ratio 0.25% / 1% | 12/13 | 1 |
-| drop-min-active 0.8 / 0.95 | 12/13 | 1 |
+| defaults (α 10⁻⁶, ratio 3, windows 30 s/2 m/5 m, half-life 10 min) | 12/13, 1, 24 s | 10/13, 2, 16 s |
+| dispersion off (Poisson, what ran live) | 12/13, 1, 24 s | 10/13, 15, 16 s |
+| log10 α −5 | 12/13, 1, 8 s | 11/13, 5, 6 s |
+| log10 α −7 / −8 | 12/13, 1, 24–26 s | 10/13, 1–2, 16 s |
+| min-ratio 2.5 / 4 | 12/13, 1, 24 s | 10/13, 2, 16 s |
+| half-life 5 / 20 min | 12/13, 1–2, 24 s | 10/13, 2, 16 s |
+| windows 30 s + 2 min | 12/13, 0, 24 s | 10/13, 0, 16 s |
+| windows 2 min + 5 min | 12/13, 1, 27 s | 10/13, 2, 16 s |
 
-The result isn't on a knife edge: 12/13 with 0–2 false alarms across two decades of α and ratios from
-2.5 to 5. The "13/13" rows catch intlShippingSlowdown with **an unrelated signal** (at ratio 2.5, a
-frontend `POST /api/cart` surge) that the service-level scorer accepts. Defaults stay. 0.54 h of quiet
-time is too little to rank settings by false alarms; run B's 30 min no-flag window adds more.
+Not on a knife edge: the same detections with 0–2 false alarms across α 10⁻⁶ to 10⁻⁸, ratios 2.5–4
+and either half-life. α 10⁻⁵ is faster (median 6–8 s) and catches one more run B scenario at 5 false
+alarms; defaults stay until a third recording says otherwise. With Poisson tests capture 2 alone
+looked the same (12/13 across two decades of α), which is why one recording wasn't enough.
 
 ## 11. Changed from the 3 Nov design
 
@@ -295,11 +369,16 @@ time is too little to rank settings by false alarms; run B's 30 min no-flag wind
 | Drain per service | per (service, severity), depth 4, `<#>` masking | INFO/ERROR merges; depth 3 lost 6 points on Loghub |
 | warm-up per series | windows wholly after the service's warm-up | warm-up data was judged as warm-up ended (test) |
 | gaps decay baselines | gaps are unobserved: not judged, learned or decayed | every series surged after the 7.5 h sleep (capture 2) |
+| Poisson counts, binomial ratios | each with the series' own dispersion | clumped calls: 15 false alarms in 0.72 h (run B) |
 | load generator | never alerted on | it is the users |
 
 ## 12. Known limits
 
-- Tuned and scored on one recording; run B is the real test.
+- Both recordings have now been used to tune (section 10.2): the next one is the held-out test.
+- A leak slower than "limit within 15 min" is not alerted on until it passes 90% of the limit (run B's
+  email leak, ~1.2 MiB/min).
+- A flag that barely acts can't be detected (run B's paymentFailure). The Week 5 evals should check
+  that each fault actually happened (here: payment's error count) before scoring the detector.
 - A single INFO line per event (intlShippingSlowdown) is invisible to counting; latency would catch
   it if shipping's span metrics showed it (they didn't in capture 2).
 - One false alarm source: flagd `EventStream` drops. A per-series exclusion would hide it; left
@@ -318,6 +397,8 @@ time is too little to rank settings by false alarms; run B's 30 min no-flag wind
 | 34 | `internal/dashboard` + `cmd/dashboard` | unit + kfake + headless Chromium; 9 revert-proofs |
 | 35 | `logs_1m` view + storage sends the view-dedup setting + `scripts/mv-dedup-check.sh` | chdb 26.9; 3 revert-proofs + storage test |
 | 36 | compose: detector, dashboard; Dockerfile targets; `anomalies`, `live.stats` topics | `docker compose config` |
-| 37 | this document | — |
+| 37 | this document (before run B) | — |
+| 38 | dispersion (quasi-Poisson counts, overdispersed binomial ratios), `-dispersion` | 38 detect revert-proofs; both recordings re-scored |
+| 39 | this document: run B results | — |
 
 New dependencies: **none** (standard library, franz-go, the OTLP protos already in use).
