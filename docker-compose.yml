@@ -175,6 +175,46 @@ services:
     mem_limit: 256m
     networks:
       default: {}
+  queryapi:
+    # The agent's read-only view (docs/evals.md section 3). queryapi serves
+    # live data (drishti); queryapi-eval serves a replayed recording
+    # (drishti_eval). Loopback only: it shows service internals.
+    image: drishti-queryapi:dev
+    build:
+      context: .
+      target: queryapi
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      DRISHTI_CLICKHOUSE_URL: "http://clickhouse:8123"
+      DRISHTI_QUERYAPI_LISTEN: ":8090"
+      DRISHTI_QUERYAPI_DB: "drishti"
+      GOMEMLIMIT: "200MiB"
+    ports:
+      - "127.0.0.1:8090:8090"
+    mem_limit: 256m
+    networks:
+      default: {}
+  queryapi-eval:
+    profiles: ["eval"]
+    image: drishti-queryapi:dev
+    build:
+      context: .
+      target: queryapi
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      DRISHTI_CLICKHOUSE_URL: "http://clickhouse:8123"
+      DRISHTI_QUERYAPI_LISTEN: ":8090"
+      DRISHTI_QUERYAPI_DB: "${EVAL_DB:-drishti_eval}"
+      GOMEMLIMIT: "200MiB"
+    ports:
+      - "127.0.0.1:8091:8090"
+    mem_limit: 256m
+    networks:
+      default: {}
   receiver:
     image: drishti-receiver:dev
     build:

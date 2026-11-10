@@ -212,6 +212,10 @@ func TestDeltas_AgreeWithTheDetectorsDeltas(t *testing.T) {
 	table := s.DB + ".metrics"
 	diff(t, "sums", query(t, s, SumDeltas(table), "calls", from, until, 4), ws)
 	diff(t, "histograms", query(t, s, HistDeltas(table), "duration", from, until, 5), wh)
+	// The delta column is a plain Array(UInt64): callers aggregate it.
+	if out, err := s.QueryParams("SELECT toTypeName(delta) FROM ("+HistDeltas(table)+") LIMIT 1 FORMAT TabSeparated", Params("duration", from, until, nil)); err != nil || strings.TrimSpace(out) != "Array(UInt64)" {
+		t.Errorf("histogram delta type = %q, %v; want Array(UInt64)", out, err)
+	}
 	diff(t, "gauges", query(t, s, Gauges(table), "memory", from, until, 6), wg)
 
 	// Nothing after until is read, nothing at or before from is returned.

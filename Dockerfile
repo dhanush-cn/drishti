@@ -18,6 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags="-s -w -X main.version=${GIT_COMMIT}" -o /out/detector ./cmd/detector
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/dashboard ./cmd/dashboard
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/queryapi ./cmd/queryapi
 
 FROM gcr.io/distroless/static-debian12:nonroot AS loadgen
 ARG GIT_COMMIT=unknown
@@ -42,6 +43,12 @@ COPY --from=build /out/dashboard /dashboard
 EXPOSE 8088
 USER nonroot:nonroot
 ENTRYPOINT ["/dashboard"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS queryapi
+COPY --from=build /out/queryapi /queryapi
+EXPOSE 8090
+USER nonroot:nonroot
+ENTRYPOINT ["/queryapi"]
 
 # Last stage = default target, so a plain `docker build .` still gives the receiver.
 FROM gcr.io/distroless/static-debian12:nonroot AS receiver

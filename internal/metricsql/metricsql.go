@@ -105,6 +105,11 @@ WHERE ts > {from:DateTime64(9, 'UTC')} AND (temporality = 'delta' OR n > 1)`
 // HistDeltas returns one row per histogram point in (from, until]: service,
 // instance, attributes, ts, bounds, delta (per-bucket increase).
 //
+// toUInt64: c − p of two UInt64 is Int64 in ClickHouse, which made the if()
+// a Variant(Array(Int64), Array(UInt64)) that aggregates (sumForEach) reject;
+// found by the query API, the first caller to aggregate the deltas. The
+// branch runs only where no bucket went down, so nothing wraps.
+//
 // arrayResize keeps the lambdas' arrays the same length on rows where the
 // layout changed. Those rows are dropped by the outer WHERE, but nothing
 // guarantees the expression is never evaluated on them first, and unequal
@@ -112,7 +117,7 @@ WHERE ts > {from:DateTime64(9, 'UTC')} AND (temporality = 'delta' OR n > 1)`
 func HistDeltas(table string) string {
 	return `SELECT service, instance, attributes, ts, bounds,
        if(temporality = 'delta' OR start_ts != prev_start OR arrayExists((c, p) -> c < p, buckets, arrayResize(prev_buckets, length(buckets))),
-          buckets, arrayMap((c, p) -> c - p, buckets, arrayResize(prev_buckets, length(buckets)))) AS delta
+          buckets, arrayMap((c, p) -> toUInt64(c - p), buckets, arrayResize(prev_buckets, length(buckets)))) AS delta
 FROM (
     SELECT service, instance, attributes, ts, start_ts, bounds, buckets, temporality,
            lagInFrame(buckets) OVER w AS prev_buckets,
