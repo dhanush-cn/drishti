@@ -1,6 +1,6 @@
 # CLAUDE.md — working rules for Drishti
 
-Drishti: observability platform. Go OTLP receiver → Kafka → ClickHouse storage consumer (exactly-once), load generator, later a streaming detector and a Python LangGraph RCA agent. Design records live in `docs/` (receiver.md, storage.md, loadgen.md, test-harness.md). Read the relevant one before changing a component.
+Drishti: observability platform. Go OTLP receiver → Kafka → ClickHouse storage consumers (logs, metrics, anomalies; exactly-once), load generator, streaming detector + dashboard, a read-only query API, and a Python root-cause agent with its eval harness (`agent/`). Design records live in `docs/` (receiver.md, storage.md, loadgen.md, test-harness.md, detector.md, evals.md). Read the relevant one before changing a component.
 
 ## How Dhanush works (non-negotiable)
 - One concern per change. No drive-by refactors.
@@ -13,6 +13,8 @@ Drishti: observability platform. Go OTLP receiver → Kafka → ClickHouse stora
 - No access to `proxy.golang.org`; machine Go may be older than `go.mod` (1.27). Build/test only with the staged `go-toolchain.tgz` + `gomodcache.tgz` (`GOMODCACHE=<staged>`, `GOPROXY=off`, `GOTOOLCHAIN=local`). If go.mod gains a dependency, ask for a refreshed `gomodcache.tgz`.
 - No Docker stack for benchmarks. Validate ClickHouse DDL/SQL/RowBinary with `chdb`; end-to-end pipeline tests with `kfake` + an HTTP shim over chdb. These are correctness checks, never benchmark numbers.
 - Every change must pass `go vet ./...` and `go test -race ./...` (run ×3 for concurrency code).
+- Tests that need a real ClickHouse (`internal/chtest`) skip unless `DRISHTI_TEST_CLICKHOUSE_URL` is set: on Claude's side point it at the chdb HTTP shim (ClickHouse 26.9 engine), on the laptop at `http://localhost:8123`. Run them for any change to schema, codecs, metricsql or the query API.
+- Agent: `cd agent && python -m unittest discover -s tests` (no network, no model). Never tune prompts on capture B: it is the held-out recording (docs/evals.md section 4).
 
 ## Code conventions
 - Every setting is a flag with a `DRISHTI_*` env fallback.

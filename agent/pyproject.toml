@@ -1,0 +1,18 @@
+[project]
+name = "drishti-agent"
+version = "0.1.0"
+description = "Drishti's root-cause agent, one-prompt baseline and eval harness (docs/evals.md)"
+requires-python = ">=3.10"
+# One dependency on purpose: typed tool results and answers. HTTP is the
+# standard library, so the code that talks to the model is code we can read.
+dependencies = ["pydantic>=2.5"]
+
+[project.scripts]
+drishti-eval = "drishti_agent.evals.run:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["drishti_agent*"]

@@ -525,9 +525,11 @@ GROUP BY service`, map[string]string{"lo": ts(q.baseStart()), "win": ts(q.winSta
 		o.Changes = changes(o)
 		out = append(out, *o)
 	}
+	// Most changes first, then by name: deterministic, and what an engineer
+	// would look at first.
 	sort.Slice(out, func(i, j int) bool {
-		if (len(out[i].Changes) > 0) != (len(out[j].Changes) > 0) {
-			return len(out[i].Changes) > 0
+		if len(out[i].Changes) != len(out[j].Changes) {
+			return len(out[i].Changes) > len(out[j].Changes)
 		}
 		return out[i].Service < out[j].Service
 	})

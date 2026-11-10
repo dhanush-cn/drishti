@@ -52,6 +52,43 @@ and spans say `email`. One instance per container in the demo. docker_stats also
 containers (`drishti-kafka`, `drishti-storage-1`, …), infrastructure (`valkey-cart`, `astronomy-db`), and
 `flagd`, `flagd-ui` and `load-generator`, which the leakage filter must cover under both names.
 
+## 2. Scenarios, labels and the fault gate (patch 45)
+
+Each recording holds 13 scenarios, one demo flag each (`timeline.jsonl` from the capture drivers).
+
+**Labels (`agent/drishti_agent/evals/labels.py`, fixed before any agent run):** the root cause an engineer
+should name. This is stricter than the detector's "affected" sets, which list every service whose telemetry
+changes, most of them victims. Two flags accept two names, because the fault sits between two services and
+the telemetry can't separate them:
+- **paymentUnreachable:** checkout dials a wrong payment address. Naming checkout or payment is right;
+  payment itself is healthy.
+- **loadGeneratorFloodHomepage:** a surge with nothing broken; frontend or frontend-proxy.
+
+Fault types are scored separately (error, latency, cpu, memory, traffic).
+
+**Fault gate (design E9):** a scenario is scored only if its fault produced a visible symptom by flag-off,
+compared with the recording's own no-flag baseline phase. The 30 minutes before a scenario contain earlier
+scenarios, so they can't serve as a clean comparison.
+
+| Gate | Flags |
+|---|---|
+| ≥ 3 errors on the faulty call | adFailure, cartFailure, paymentFailure, paymentUnreachable, productCatalogFailure |
+| server p95 ≥ 1.5× | adManualGc (or CPU), productCatalogLockContention, imageSlowLoad (frontend-proxy), intlShippingSlowdown, recommendationCacheFailure (or memory) |
+| CPU ≥ 1.5× | adHighCpu |
+| memory rising ≥ 0.5 MiB/min | emailMemoryLeak, recommendationCacheFailure |
+| server calls ≥ 2× | loadGeneratorFloodHomepage |
+
+Scenarios that fail are listed as **not scored** with the measurement, never dropped silently. Capture 2:
+**10 of 13 scored**. adFailure produced 1 failed GetAds in 66 calls and cartFailure 2 errors: the same
+"flag barely acted" case as run B's paymentFailure. intlShippingSlowdown didn't move shipping's p95
+(5.4 vs 4.35 ms).
+
+**Triggers (design E8):**
+- **agent-only:** as of flag-off (on + on_minutes; the slept capture 2 scenario is cut at its first
+  10 min). This measures diagnosis on a developed incident.
+- **end-to-end:** as of the first alert opened between flag-on and 90 s after flag-off, on any service.
+  That's what would page someone. No alert means "missed", scored wrong.
+
 ## 3. The agent's view: the query API (patch 44)
 
 `cmd/queryapi` (`internal/queryapi`; compose `queryapi` on 127.0.0.1:8090 for live data, `queryapi-eval`
@@ -107,6 +144,75 @@ recordings. They decide what the agent looks at first, not what it concludes.
 
 **Known limits:**
 - p95 comes from span-metric buckets (2 ms … 15 s), so a p95 at 15000 ms means "at least 15 s".
-- The first point of a series yields nothing (the detector's rule). An error series born with its first
-  errors loses that first 5 s interval.
+- The first point of a series yields nothing (the detector's rule). Checked on capture 2: the demo's span
+  metrics start a new series (e.g. the first ERROR series of a span) with `start_ts` at its creation and a
+  first value of 0, so nothing is lost there. A producer that starts a series with a non-zero count would
+  lose that first interval.
 - p95 over a 1-minute step at ~2 calls/min is a quantile of two calls.
+
+## 4. The agent, the baseline, the harness (patch 45)
+
+`agent/` (Python, one dependency: Pydantic; HTTP is the standard library).
+
+**Agent v0 (`agent.py`): a plain tool-calling loop.** Week 6 turns it into a LangGraph hypothesis graph.
+1. **Triage first, no LLM:** the harness calls `overview` (5 m vs the 30 m before) and `anomalies` itself
+   and puts both in the first message.
+2. **Loop:** the model calls tools (the seven query API endpoints) and gets compact results back.
+   - The overview goes back as text: changed services and their changes first, then one line per service.
+     JSON for ~25 services is longer than the 6,000-character result cap, and the cut-off was found by
+     running the harness on capture 2.
+   - The harness fixes `until`: tools take windows and services, never a time.
+3. **Ends** when the model calls `submit_diagnosis` (parsed into `Diagnosis`; an invalid answer is
+   recorded, never repaired), or when the budget (12 tool calls) runs out. Out of budget, the model gets
+   one last turn **without tools** and is told to answer "unsure" if the evidence isn't there. It never
+   gets more budget, and the harness never fills in an answer.
+
+**Baseline (`baseline.py`, design §8):** same model, one prompt, no tools, given a fixed dump of what the
+tools would show at a glance: overview, alerts, and every service's top log templates, capped at
+48,000 characters.
+
+**Heuristic floor (`--provider heuristic`, not a model):** names the first service the triage overview
+lists with changes. It shows whether the LLM adds anything over "pick the top changed service", and it
+runs the whole harness without a model. **Capture 2 (the tuning recording):**
+- agent-only: top-1 **5/10**, top-3 7/10;
+- end-to-end: top-1 **1/10**. At the first alert, tens of seconds into a fault, a 5-minute overview is still
+  dominated by the previous scenario. An agent that picks its own windows has room to beat that.
+
+**Providers (`llm.py`):**
+- `ollama`: OpenAI-compatible `/v1` at localhost:11434, for free iteration on the RTX 5050;
+- `openai`: any OpenAI-compatible hosted API, given `--base-url`;
+- `anthropic`: the Messages API.
+
+Temperature 0. Provider errors are retried with backoff, then recorded as failed runs. Cost =
+tokens × the prices you pass (`--price-in/--price-out`, USD per million tokens). Nothing is priced from
+memory; token counts are always recorded.
+
+**Scoring (`evals/score.py`):**
+- top-1 (the named root cause is accepted);
+- top-3 (an accepted service in root cause + `ranked_services`);
+- fault type;
+- unsure (nothing named: honest, scored wrong);
+- confidently wrong (wrong with confidence ≥ 0.7; target < 10%).
+
+Plus tool calls, tokens, seconds and cost. `RESULTS.md` reports counts ("7/10"), per-scenario rows, and
+the not-scored scenarios with their gate measurement.
+
+**Tune, freeze, test (design changes 6 and 7):**
+1. Iterate prompts on **capture 2** with Ollama (`--provider ollama`, 3 runs per cell).
+2. Run the **hosted model once on capture 2**, to catch model-specific failures such as tool-call
+   formatting before the held-out run.
+3. `python -m drishti_agent.evals.freeze --tuned-on capture-2 --hosted-check <that run>` writes
+   `agent/FROZEN.json` (prompt version + commit). It refuses without a hosted run of the current prompts.
+4. Score **capture B once**, with `--held-out`. The runner refuses if the prompts changed after the freeze.
+
+What's held out:
+- On capture B the **agent-only column is held out**.
+- The **end-to-end column is not fully held out**: the detector's clumping fix (patch 38) was tuned on
+  run B, so B's alert times are partly tuned.
+- About 13 scenarios before the gate means a single scenario moves the result by 8–10 percentage points.
+  Read counts, not percentages.
+
+```bash
+scripts/week5-eval.sh load capture-2      # create-eval --reset, load, store, replay detector, load events
+scripts/week5-eval.sh run capture-2 ollama qwen2.5:7b
+```
