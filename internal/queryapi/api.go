@@ -576,7 +576,10 @@ func changes(o *ServiceOverview) []string {
 	if w, b, ok := v(o.LogLinesPerMin); ok && b >= 1 && (w >= 3*b || w <= b/3) {
 		out = append(out, fmt.Sprintf("log lines %.1f/min (was %.1f/min)", w, b))
 	}
-	if w, b, ok := v(o.CPU); ok && w >= 2*b && w-b >= 10 {
+	// docker_stats reports container.cpu.utilization in percent (ad: 0.35 at
+	// rest, 3.16 under adHighCpu on capture 2). The first rule asked for +10
+	// points and never fired on this demo; +1 point and 2x does.
+	if w, b, ok := v(o.CPU); ok && w >= 2*b && w-b >= 1 {
 		out = append(out, fmt.Sprintf("CPU utilization %.1f (was %.1f)", w, b))
 	}
 	if o.MemSlopeMiBMin != nil && *o.MemSlopeMiBMin >= 1 {

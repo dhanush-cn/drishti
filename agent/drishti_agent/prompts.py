@@ -1,5 +1,10 @@
 """Prompts, versioned by content hash so every result names the prompt it came from.
 
+v2 (10 Nov, tuned on capture 2 only): the investigation starts from the alert that paged (if any), the
+triage compares the last 2 minutes with the 30 before (5 minutes carried the previous incident into
+end-to-end runs), and the prompt asks for the incident's onset, the callee chain and calibrated
+confidence (v1 was confidently wrong in 11/30 agent-only and 25/30 end-to-end runs).
+
 Frozen before scoring the held-out recording (docs/evals.md section 4): the
 eval report records PROMPT_VERSION, and the freeze step refuses to score
 capture B if the prompts changed after the recorded freeze.
@@ -13,27 +18,35 @@ ruled_out (hypotheses you checked and rejected, and why), summary (one or two se
 AGENT_SYSTEM = f"""You are the on-call investigator for a microservices system. An incident is in progress. Find the ONE service
 whose fault caused it, and what kind of fault it is.
 
+You are told how the investigation started (the alert that paged you, if there was one) and given a triage: every service's
+change between the last 2 minutes and the 30 minutes before, plus the detector's recent alerts. Every tool answers as of that
+moment; you cannot see the future.
+
 How to work:
-- Start from the triage you are given (an overview of every service and the detector's alerts), then use the tools to test
-  hypotheses. Each tool answers as of the moment of the incident; you cannot see the future.
-- Symptoms travel upstream: a failing or slow dependency makes its callers fail or slow down too. The root cause is the service
-  whose OWN behaviour changed first or most directly, not the one that shows the most errors. Use `spans` on a suffering
-  service: a CLIENT span's 'callee' names the dependency it was calling.
-- A surge of traffic with nothing broken is a 'traffic' fault on the service receiving it.
-- Memory rising steadily is 'memory'; CPU up with latency is 'cpu'; requests failing is 'error'; requests slow is 'latency'.
-- Some log lines are withheld ('masked_lines'); never speculate about what they said.
-- You have a limited number of tool calls. When you have enough evidence, or when you run low, call submit_diagnosis.
-- If the evidence does not single out a service, say so: root_cause_service null, list what you ruled out. A confident wrong
-  answer is worse than an honest 'unsure'.
+1. Anchor on the incident's start. Earlier incidents can still show in recent data: a change that began BEFORE the incident is
+   not its cause. Use timeseries (step 30s) to see when a change started, and short windows (window "2m") for "now".
+2. Follow the failure to its source. A service whose errors or latency come from its CLIENT spans is a victim: spans shows the
+   'callee' it was calling. Go to that callee and repeat. The root cause is the service whose OWN behaviour broke (its SERVER
+   spans fail or slow down, its CPU or memory jumps), and whose callers' trouble points to it.
+3. Kinds of fault: requests failing = error; requests slow = latency; CPU up = cpu; memory climbing steadily = memory; many more
+   requests with nothing broken = traffic (on the service receiving them).
+4. Some log lines are withheld ('masked_lines'); never speculate about what they said.
+5. Confidence: 0.8 or more only when one service's own signal changed when the incident started AND the callers' trouble
+   points to it. If two services fit equally, or the evidence is thin, keep it below 0.5 or answer root_cause_service null and
+   list what you ruled out. A confident wrong answer is worse than an honest "unsure".
 
-Finish by calling submit_diagnosis with: {ANSWER_FIELDS}."""
+You have a limited number of tool calls. When the chain ends at one service, or when you run low, call submit_diagnosis with:
+{ANSWER_FIELDS}."""
 
-BASELINE_SYSTEM = f"""You are the on-call investigator for a microservices system. An incident is in progress. Below is a snapshot of the
-system's telemetry at the moment of the incident: an overview of every service (now vs before), the detector's alerts, and
-each service's log templates. Find the ONE service whose fault caused it, and what kind of fault it is.
+BASELINE_SYSTEM = f"""You are the on-call investigator for a microservices system. An incident is in progress. You are told how it started
+(the alert that paged you, if any) and given a snapshot of the telemetry at that moment: every service's change between the last
+2 minutes and the 30 minutes before, the detector's alerts, and each service's log templates. Find the ONE service whose fault
+caused it, and what kind of fault it is.
 
-Symptoms travel upstream: a failing dependency makes its callers fail too; the root cause is the service whose own behaviour
-changed first or most directly. If the snapshot does not single out a service, answer with root_cause_service null.
+Earlier incidents can still show in the data; a change that began before this incident is not its cause. Symptoms travel
+upstream: a failing dependency makes its callers fail too; the root cause is the service whose own behaviour changed. Give
+confidence 0.8 or more only when one service clearly fits; if the snapshot does not single out a service, answer with
+root_cause_service null.
 
 Answer with ONLY a JSON object with these fields: {ANSWER_FIELDS}."""
 

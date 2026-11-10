@@ -140,6 +140,27 @@ class Lenient(unittest.TestCase):
             Diagnosis.model_validate({"fault_type": "gremlins"})
 
 
+class Briefing(unittest.TestCase):
+    ALERT = {"service": "frontend", "rule": "span_slow", "opened_at": "2026-11-03T17:35:50Z", "series": {"span.kind": "SERVER"}}
+
+    def test_end_to_end_runs_start_from_the_paging_alert(self):
+        llm = Scripted([submit()])
+        agent.investigate(FakeAPI(), llm, budget=3, alert=self.ALERT)
+        first = llm.sent[0][1][0]["content"]
+        self.assertIn("paged", first)
+        self.assertIn("service frontend, rule span_slow (span.kind=SERVER), opened at 2026-11-03T17:35:50Z", first)
+        llm = Scripted([Reply('{"root_cause_service": null}')])
+        baseline.diagnose(FakeAPI(), llm, alert=self.ALERT)
+        self.assertIn("rule span_slow", llm.sent[0][1][0]["content"], "the baseline gets the same briefing")
+
+    def test_agent_only_runs_have_no_alert_and_a_2m_triage(self):
+        api = FakeAPI()
+        llm = Scripted([submit()])
+        agent.investigate(api, llm, budget=3)
+        self.assertIn("no single alert", llm.sent[0][1][0]["content"])
+        self.assertEqual(api.calls[0][1]["window"], "2m")
+
+
 class Stall(unittest.TestCase):
     def test_talking_without_acting_stops_after_two_reminders(self):
         llm = Scripted([Reply("let me think"), Reply("still thinking"), Reply("hmm"), submit()])

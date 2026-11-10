@@ -155,8 +155,9 @@ recordings. They decide what the agent looks at first, not what it concludes.
 `agent/` (Python, one dependency: Pydantic; HTTP is the standard library).
 
 **Agent v0 (`agent.py`): a plain tool-calling loop.** Week 6 turns it into a LangGraph hypothesis graph.
-1. **Triage first, no LLM:** the harness calls `overview` (5 m vs the 30 m before) and `anomalies` itself
-   and puts both in the first message.
+1. **Triage first, no LLM:** the harness calls `overview` (2 m vs the 30 m before; 5 m in v1, see §5) and
+   `anomalies` itself and puts both in the first message, after a one-line briefing: the alert that paged
+   it (end-to-end) or "no single alert identifies it" (agent-only).
 2. **Loop:** the model calls tools (the seven query API endpoints) and gets compact results back.
    - The overview goes back as text: changed services and their changes first, then one line per service.
      JSON for ~25 services is longer than the 6,000-character result cap, and the cut-off was found by
@@ -164,7 +165,8 @@ recordings. They decide what the agent looks at first, not what it concludes.
    - The harness fixes `until`: tools take windows and services, never a time.
 3. **Ends** when the model calls `submit_diagnosis` (parsed into `Diagnosis`; an invalid answer is
    recorded, never repaired), or when the budget (12 tool calls) runs out. Out of budget, the model gets
-   one last turn **without tools** and is told to answer "unsure" if the evidence isn't there. It never
+   one last turn **without tools** and is told to answer "unsure" if the evidence isn't there. A run that
+   neither calls a tool nor answers gets 2 reminders, then stops as unsure (at most 16 turns). It never
    gets more budget, and the harness never fills in an answer.
 
 **Baseline (`baseline.py`, design §8):** same model, one prompt, no tools, given a fixed dump of what the
@@ -174,16 +176,18 @@ tools would show at a glance: overview, alerts, and every service's top log temp
 **Heuristic floor (`--provider heuristic`, not a model):** names the first service the triage overview
 lists with changes. It shows whether the LLM adds anything over "pick the top changed service", and it
 runs the whole harness without a model. **Capture 2 (the tuning recording):**
-- agent-only: top-1 **5/10**, top-3 7/10;
-- end-to-end: top-1 **1/10**. At the first alert, tens of seconds into a fault, a 5-minute overview is still
-  dominated by the previous scenario. An agent that picks its own windows has room to beat that.
+- v1 (5-minute triage): agent-only top-1 **5/10**, top-3 7/10; end-to-end top-1 **1/10**.
+- v2 (2-minute triage): agent-only top-1 **4/10**, top-3 7/10; end-to-end top-1 **1/10**. Six scenarios
+  changed answer each way; the floor is unstable to the window, which is why it is a floor and not tuned.
+- End-to-end stays low: at the first alert, tens of seconds into a fault, the busiest changed service is
+  often still the previous scenario's. An agent that picks its own windows has room to beat that.
 
 **Providers (`llm.py`):**
 - `ollama`: OpenAI-compatible `/v1` at localhost:11434, for free iteration on the RTX 5050;
 - `openai`: any OpenAI-compatible hosted API, given `--base-url`;
 - `anthropic`: the Messages API.
 
-Temperature 0. Provider errors are retried with backoff, then recorded as failed runs. Cost =
+Temperature 0. Calls time out after 120 s; provider errors are retried twice with backoff, then recorded as failed runs. Cost =
 tokens × the prices you pass (`--price-in/--price-out`, USD per million tokens). Nothing is priced from
 memory; token counts are always recorded.
 
@@ -216,3 +220,47 @@ What's held out:
 scripts/week5-eval.sh load capture-2      # create-eval --reset, load, store, replay detector, load events
 scripts/week5-eval.sh run capture-2 ollama qwen2.5:7b
 ```
+
+## 5. Tuning on capture 2: v1 → v2 (patches 46, 47)
+
+Everything here was measured on **capture 2**, the tuning recording. Capture B was not looked at.
+
+**v1 run** (Qwen 2.5 7B on Ollama, prompts `43e93a7f9a5a`, 3 runs per cell, 10 scored scenarios):
+
+| | top-1 | top-3 | confidently wrong |
+|---|---|---|---|
+| agent, agent-only | 19/30 | 21/30 | 11/30 |
+| agent, end-to-end | 5/30 | 7/30 | 25/30 |
+| baseline, both columns | 0/30 (all invalid) | | |
+
+Runs 1–3 at temperature 0 gave the same answer in most cells, so 3 runs mostly measure the same thing 3 times.
+
+**Harness lessons (patch 46, no prompt change):**
+- **Ollama silently truncates.** With its default context, the first run's prompts were cut to
+  ~2,050 tokens with no error, and the results were meaningless. Run `ollama serve` with
+  `OLLAMA_CONTEXT_LENGTH=24576`: on the RTX 5050 (8 GB) that stays 100% on the GPU (6.0 GB); 32,768
+  spilled 9% to the CPU. A run where every call reports the same input token count is truncated.
+- **The schema threw away the baseline.** Qwen wrote `ruled_out` as an object in all 60 baseline replies,
+  so all 60 were invalid. `evidence`/`ruled_out` now accept a list, an object or a string;
+  `ranked_services` a comma string; `confidence` `"0.8"` or `"80%"` (a bare number above 1 stays invalid:
+  the scale is ambiguous). Re-scored offline, the same 60 replies give baseline top-1 **15/30** agent-only
+  and **9/30** end-to-end. The baseline beats the v1 agent end-to-end (9 vs 5).
+- **One stalled call froze the run for minutes** (300 s × 5 retries). Now 120 s × 2, and stalled runs stop.
+
+**Why the agent failed, per scenario (v1), and the v2 change for each (patch 47):**
+- **End-to-end, 5/30, and 25/30 confidently wrong.** The agent was not told which alert paged it, and
+  the 5-minute triage window still held the previous scenario (e.g. ad latency during
+  productCatalogLockContention, so it answered `ad` 3/3). v2: the first message names the alert
+  (service, rule, series, time), triage covers 2 minutes, and the prompt says to anchor on the onset.
+  The baseline gets the same briefing and window, so the comparison stays fair.
+- **adHighCpu, 0/3 both columns.** `changes` listed CPU only at +10 points, but docker_stats reports
+  percent of the host: ad went 0.35 → 3.16 under the fault. v2 rule: at least 2× and +1 point
+  (`TestChanges_CPUInDockerStatsPercent`; normal jitter such as 1.76 → 2.55 stays out).
+- **productCatalogFailure, 0/3 (checkout).** It stopped at the service with errors instead of asking
+  what checkout calls. v2 prompt: follow the callee chain until the errors stop.
+- **Confidently wrong, 11/30 even agent-only.** v2 prompt: 0.8 or more only when the service's own
+  signal changed at the onset and its callers point to it; otherwise below 0.5 or null.
+- **emailMemoryLeak, 0/3.** That scenario starts right after the laptop slept, so its traffic baseline
+  is distorted. Not tuned for; it may stay a miss.
+
+v2 prompts are `57bbd9adf6b6`. Their capture 2 numbers come from the next run; none are claimed here.

@@ -114,7 +114,9 @@ def main(argv=None) -> int:
                                                             "confidently_wrong": False, "named": None, "confidence": 0.0})
                         else:
                             api = QueryAPI(a.api, iso(until))
-                            r = agent.investigate(api, llm, a.budget) if sysname == "agent" else baseline.diagnose(api, llm)
+                            # End-to-end runs start from the alert that paged; agent-only runs from a report with no alert.
+                            alert = sc.trigger_alert if col == "end-to-end" else None
+                            r = agent.investigate(api, llm, a.budget, alert) if sysname == "agent" else baseline.diagnose(api, llm, alert)
                             s = score(sc.flag, r)
                             row.update(missed=False, score=s.to_json(), usd=round(cost(r, a.price_in, a.price_out), 6),
                                        result=r.model_dump(mode="json"))
