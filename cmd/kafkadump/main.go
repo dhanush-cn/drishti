@@ -1,8 +1,11 @@
-// Command kafkadump records Kafka records to a file and summarizes a
-// recording (internal/kdump, docs/detector.md section 9).
+// Command kafkadump records Kafka records to a file, summarizes a recording,
+// and replays one into Kafka for the evals (internal/kdump, docs/detector.md
+// section 9, docs/evals.md).
 //
 //	kafkadump dump -from 2026-11-04T10:00:00Z -to 2026-11-04T12:00:00Z -out capture.kd.gz
 //	kafkadump summary capture.kd.gz
+//	kafkadump load -in capture.kd.gz -prefix eval.
+//	kafkadump load-events -in events.jsonl -topic eval.anomalies
 //
 // dump writes capture.kd.gz plus capture.kd.gz.manifest.json (offset range and
 // record count per partition, so the file can be checked against Kafka).
@@ -36,6 +39,10 @@ func main() {
 		err = dumpCmd(ctx, os.Args[2:])
 	case "summary":
 		err = summaryCmd(os.Args[2:])
+	case "load":
+		err = loadCmd(ctx, os.Args[2:])
+	case "load-events":
+		err = loadEventsCmd(ctx, os.Args[2:])
 	default:
 		usage()
 	}
@@ -46,7 +53,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: kafkadump dump -from RFC3339 -to RFC3339 -out FILE [-brokers B] [-topics T1,T2]\n       kafkadump summary [-json OUT] FILE")
+	fmt.Fprintln(os.Stderr, "usage: kafkadump dump -from RFC3339 -to RFC3339 -out FILE [-brokers B] [-topics T1,T2]\n       kafkadump summary [-json OUT] FILE\n       kafkadump load -in FILE [-prefix eval.] [-topics T1,T2] [-brokers B]\n       kafkadump load-events -in events.jsonl [-topic eval.anomalies] [-brokers B]")
 	os.Exit(2)
 }
 
