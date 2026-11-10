@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"fmt"
+	"slices"
+
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -59,3 +62,41 @@ func (d *logsDecoder) Decode(value []byte) (int, error) {
 }
 
 func (d *logsDecoder) Append(w *rowBuf, src Source) int { return AppendLogs(w, &d.req, src) }
+
+// codecs by -signal name.
+var codecs = map[string]Codec{Logs.Name: Logs, Metrics.Name: Metrics}
+
+// CodecFor returns the codec named by cmd/storage's -signal.
+func CodecFor(name string) (Codec, error) {
+	c, ok := codecs[name]
+	if !ok {
+		return Codec{}, fmt.Errorf("unknown signal %q (want one of %v)", name, CodecNames())
+	}
+	return c, nil
+}
+
+// CodecNames lists the known signals, sorted.
+func CodecNames() []string {
+	names := make([]string, 0, len(codecs))
+	for n := range codecs {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// Encode runs records through a fresh decoder outside the consumer, in order,
+// and returns the RowBinary body an insert would send. For tests and tools
+// that load fixtures into ClickHouse with the consumer's exact encoding.
+func (c Codec) Encode(values [][]byte, srcs []Source) ([]byte, int, error) {
+	d := c.NewDecoder()
+	var w rowBuf
+	rows := 0
+	for i, v := range values {
+		if _, err := d.Decode(v); err != nil {
+			return nil, 0, err
+		}
+		rows += d.Append(&w, srcs[i])
+	}
+	return w.b, rows, nil
+}

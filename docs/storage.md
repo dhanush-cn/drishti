@@ -157,6 +157,39 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 
 **No behaviour change for logs:** every existing test passes unchanged (including byte-identical batches vs a one-record-per-poll reference and the crash-between-insert-and-commit test), and the stored-offset skip proof was re-verified through the seam.
 
+### 10. Metrics stored as received; deltas at query time (Week 5, patch 41)
+
+**What:** `cmd/storage -signal metrics` (compose `storage-metrics`) stores every OTLP metric data point in `drishti.metrics` (`clickhouse/schema/003_metrics.sql`): one row per point, with its kind, temporality, monotonic flag, value or histogram arrays, attributes and Kafka offset. Exponential histograms and summaries are skipped (neither recording has any: 0 of 1.19M / 1.29M points).
+
+**Why raw, not deltas:** the detector turns cumulative points into deltas in memory (`otlpmetrics.Deltas`). Doing that here would make a row depend on the series' previous point, i.e. on what this process had seen before. After a crash, or when a partition moves to another consumer, the first point of every series would be stored differently. That breaks the codec contract (decision 9) and with it exactly-once. Prometheus makes the same choice: counters are stored raw and `rate()` is computed when asked.
+
+**Query-time deltas (`internal/metricsql`):** a window function over `(series_id ORDER BY ts)`, which the sort key `(service, metric, series_id, ts)` keeps sequential. The rules are the detector's, so a number the agent reads means what an alert meant:
+
+| Point | Delta |
+|---|---|
+| first of its series | nothing (its total covers hours) |
+| cumulative sum, start time changed or value went down | value (a reset: everything since) |
+| cumulative sum, otherwise | value − previous |
+| cumulative histogram, start changed or any bucket went down | the new bucket counts |
+| cumulative histogram, bounds changed | nothing (can't subtract different layouts) |
+| delta temporality | value as is |
+
+Queries read 3 minutes before `from`, so the window's first point has its predecessor. Times are passed as `DateTime64(9, 'UTC')` parameters, because a bare `DateTime64` parameter is read in the server's time zone. The test found this on a server set to Asia/Calcutta: every window came back empty.
+
+**Series identity:** `series_id = cityHash64(service, instance, metric, attributes)`.
+- `instance` (service.instance.id, else container.id, else container.name, else host.name) keeps two replicas' counters apart. Otherwise their values would interleave and every switch would read as a reset.
+- Attributes are written sorted by key, because ClickHouse hashes a Map in insertion order.
+- `service` is the receiver's owner key (`container:email` for docker_stats); the query API maps it to `email` (Week 5 design, change 3).
+
+**Volume (measured on the recordings with the codec):** capture B 1.29M points in 2 h 23 min, about 150 points/s. RowBinary is about 0.9 KB per row before compression, most of it resource attributes repeated per point (ZSTD columns).
+
+**Verified (cloud VM, ClickHouse 26.9 engine via chdb behind an HTTP shim; correctness only):**
+- `TestDeltas_AgreeWithTheDetectorsDeltas`: the SQL and `otlpmetrics.Deltas` agree point for point on a fixture where every rule has a point only that rule explains (72 sum, 27 histogram, 28 gauge points).
+- `TestMetricsCodec_RoundTripThroughClickHouse`: the server reads back the values meant; reordered attributes = one series; two instances = two series; resume from the metrics table's projection.
+- `TestRun_MetricsEndToEndCrashLeavesNoDuplicates`: kfake → consumer with the metrics codec → ClickHouse, crash between insert and commit, every point once.
+
+These tests skip unless `DRISHTI_TEST_CLICKHOUSE_URL` is set; the Week 5 driver runs them against the laptop's ClickHouse 26.8.
+
 ## Run
 
 ```bash
@@ -343,3 +376,15 @@ The instrumentation reads clocks four times per iteration and does not change be
 | Codec row count drives the cut | ignore `n` in the cut condition (`b.rows+0*n`) | `TestCodecSeam_CutsBeforeAMessageThatWouldCrossTheRowLimit`: `first batch = "aaabbb" (6 rows), want "aaa"` (verified 10 Nov) |
 | Columns match the codec | skip the `slices.Equal` check in `New` | `TestNew_RejectsClickHouseColumnsThatDifferFromTheCodec`: `err = <nil>` (verified 10 Nov) |
 | Stored-offset skip, through the seam | `false &&` the skip condition | `TestRun_CrashBetweenInsertAndCommitLeavesNoDuplicates` red (re-verified 10 Nov) |
+| Attributes sorted before hashing | skip the `slices.SortFunc` in the metrics codec | `TestMetricsCodec_StoresPointsAsReceived`: `not sorted by key`; round trip: `series/points = "3\t3", want 2 series` (verified 10 Nov) |
+| Instance in the series identity | drop `instance` from `series_id` in 003_metrics.sql | round trip: `series/points = "1\t3", want 2 series` (verified 10 Nov) |
+| Metrics resume skip | `false &&` the skip condition | `TestRun_MetricsEndToEndCrashLeavesNoDuplicates`: `"360\t60", want 240 points from 60 records` (verified 10 Nov) |
+| Sum reset by start time | drop `start_ts != prev_start OR` from `SumDeltas` | `TestDeltas_…`: `sums: disagree on 1 of 72 points` (verified 10 Nov) |
+| Sum reset by decrease | drop `OR value < prev_value` | same: 1 of 72 (verified 10 Nov) |
+| First point yields nothing | drop `n > 1` from `SumDeltas` | same: 1 of 72 (the series that starts inside the window) (verified 10 Nov) |
+| Lookback before `from` | lookback 0 | same: 1 of 72 (verified 10 Nov) |
+| Delta temporality passes through | `if(false, value, …)` | same: 21 of 72 (verified 10 Nov) |
+| Histogram bucket drop = reset | drop the `arrayExists` term | `histograms: disagree on 1 of 27` (verified 10 Nov) |
+| Histogram start change = reset | drop `start_ts != prev_start` from `HistDeltas` | same: 1 of 27 (verified 10 Nov) |
+| Histogram bounds change yields nothing | drop `bounds = prev_bounds AND length(…)` | same: 1 of 27 (verified 10 Nov) |
+| Times typed UTC | `DateTime64(9)` parameters | on a non-UTC server: `disagree on 72 of 72` (verified 10 Nov) |

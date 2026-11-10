@@ -1,5 +1,7 @@
-// Command storage consumes OTLP logs from Kafka and writes them to
-// ClickHouse in batches, exactly once per Kafka record (docs/storage.md).
+// Command storage consumes one Kafka topic and writes it to ClickHouse in
+// batches, exactly once per Kafka record (docs/storage.md). -signal picks
+// the message type: logs (otlp.logs → drishti.logs) or metrics
+// (otlp.metrics → drishti.metrics). One process per signal (decision 9).
 package main
 
 import (
@@ -23,13 +25,14 @@ import (
 func main() {
 	var (
 		brokers   = flag.String("brokers", env("DRISHTI_KAFKA_BROKERS", "localhost:9092"), "comma-separated Kafka bootstrap brokers")
-		topic     = flag.String("topic", env("DRISHTI_LOGS_TOPIC", "otlp.logs"), "Kafka topic to consume")
+		signal_   = flag.String("signal", env("DRISHTI_STORAGE_SIGNAL", "logs"), "what to store: "+strings.Join(storage.CodecNames(), "|")+" (sets the default topic and table)")
+		topic     = flag.String("topic", env("DRISHTI_STORAGE_TOPIC", ""), "Kafka topic to consume; empty = the signal's (otlp.logs, otlp.metrics)")
 		group     = flag.String("group", env("DRISHTI_STORAGE_GROUP", "drishti-storage"), "consumer group")
 		reset     = flag.String("reset", env("DRISHTI_STORAGE_RESET", "earliest"), "where a group with no committed offset starts: earliest|latest")
 		chURL     = flag.String("clickhouse-url", env("DRISHTI_CLICKHOUSE_URL", "http://localhost:8123"), "ClickHouse HTTP endpoint")
 		chUser    = flag.String("clickhouse-user", env("DRISHTI_CLICKHOUSE_USER", "drishti"), "ClickHouse user")
 		chPass    = flag.String("clickhouse-password", env("DRISHTI_CLICKHOUSE_PASSWORD", "drishti_dev"), "ClickHouse password")
-		table     = flag.String("table", env("DRISHTI_LOGS_TABLE", "drishti.logs"), "target table (clickhouse/schema/001_logs.sql)")
+		table     = flag.String("table", env("DRISHTI_STORAGE_TABLE", ""), "target table; empty = the signal's (drishti.logs, drishti.metrics; clickhouse/schema/)")
 		maxRows   = flag.Int("batch-rows", envInt("DRISHTI_BATCH_ROWS", 100_000), "flush a partition's batch at this many rows")
 		maxBytes  = flag.Int("batch-bytes", envInt("DRISHTI_BATCH_BYTES", 32<<20), "flush a partition's batch at this many encoded bytes")
 		maxWait   = flag.Duration("batch-wait", envDur("DRISHTI_BATCH_WAIT", 2*time.Second), "flush a partition's batch this long after its first record (bounds event -> queryable at low traffic)")
@@ -47,10 +50,22 @@ func main() {
 		log.Error("-reset must be earliest or latest", "got", *reset)
 		os.Exit(2)
 	}
+	codec, err := storage.CodecFor(*signal_)
+	if err != nil {
+		log.Error("-signal", "err", err)
+		os.Exit(2)
+	}
+	if *topic == "" {
+		// DRISHTI_LOGS_TOPIC was the logs-only name before -signal; still honoured.
+		*topic = map[string]string{"logs": env("DRISHTI_LOGS_TOPIC", "otlp.logs"), "metrics": "otlp.metrics"}[codec.Name]
+	}
+	if *table == "" {
+		*table = map[string]string{"logs": env("DRISHTI_LOGS_TABLE", "drishti.logs"), "metrics": "drishti.metrics"}[codec.Name]
+	}
 
-	ch := &storage.CH{URL: *chURL, User: *chUser, Password: *chPass, Table: *table, HTTP: &http.Client{}}
+	ch := &storage.CH{URL: *chURL, User: *chUser, Password: *chPass, Table: *table, Columns: codec.Columns, HTTP: &http.Client{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	err := ch.Ping(ctx)
+	err = ch.Ping(ctx)
 	cancel()
 	if err != nil {
 		log.Error("clickhouse check failed", "err", err)
@@ -87,6 +102,7 @@ func main() {
 		CrashAfterInsert: crash,
 		CH:               ch,
 		Log:              log,
+		Codec:            codec,
 	})
 	if err != nil {
 		log.Error("storage consumer", "err", err)
@@ -95,7 +111,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("storage consumer running", "topic", *topic, "group", *group, "table", *table,
+	log.Info("storage consumer running", "signal", codec.Name, "topic", *topic, "group", *group, "table", *table,
 		"batch_rows", *maxRows, "batch_bytes", *maxBytes, "batch_wait", maxWait.String(), "reset", *reset,
 		"max_pending_bytes", *pending, "decode_workers", *decodeN, "instance_id", *instance, "session_timeout", session.String())
 	if err := c.Run(ctx); errors.Is(err, storage.ErrCrash) {
