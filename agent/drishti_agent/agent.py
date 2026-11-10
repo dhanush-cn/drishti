@@ -29,7 +29,8 @@ from .models import Diagnosis, RunResult, ToolRecord
 from .prompts import AGENT_SYSTEM, SUBMIT_TOOL
 
 DEFAULT_BUDGET = 12          # tool calls (not counting submit_diagnosis)
-MAX_TURNS = 24               # model turns, a hard stop against a model that loops without calling tools
+MAX_TURNS = 16               # model turns, a hard stop
+MAX_NUDGES = 2               # turns that neither call a tool nor answer, before the run stops as unsure
 
 
 def triage(api: QueryAPI) -> str:
@@ -69,6 +70,7 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET) -> RunResult:
                          f"Incident in progress. Triage at the moment of the incident:\n\n{triage(api)}\n\n"
                          f"You have {budget} tool calls. Investigate, then call submit_diagnosis."}]
     used = 0
+    nudges = 0
     try:
         for _turn in range(MAX_TURNS):
             out_of_budget = used >= budget
@@ -96,6 +98,10 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET) -> RunResult:
                     res.diagnosis = Diagnosis.unsure("tool budget exhausted without a diagnosis")
                     res.budget_exhausted = True
                     break
+                if nudges >= MAX_NUDGES:
+                    res.diagnosis = Diagnosis.unsure(f"no tool call and no diagnosis after {MAX_NUDGES} reminders")
+                    break
+                nudges += 1
                 msgs.append({"role": "user", "content": "Use the tools to investigate, or call submit_diagnosis."})
                 continue
             for c in calls:

@@ -11,6 +11,22 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+def _as_list(v) -> list:
+    """Lists of observations, accepted in the shapes models actually write.
+    Qwen 2.5 wrote ruled_out as {"email": "no errors", ...} in all 60 baseline
+    replies of the first capture 2 run; rejecting that threw away valid answers
+    (scored 0/30 for the wrong reason). The content is kept, never invented."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [v] if v.strip() else []
+    if isinstance(v, dict):
+        return [f"{k}: {x}" for k, x in v.items()]
+    if isinstance(v, (list, tuple)):
+        return [x if isinstance(x, str) else str(x) for x in v]
+    return [str(v)]
+
+
 class FaultType(str, Enum):
     error = "error"          # requests fail
     latency = "latency"      # requests slow
@@ -41,6 +57,33 @@ class Diagnosis(BaseModel):
         v = v.strip()
         if v.lower() in ("", "none", "null", "unknown", "unsure"):
             return None
+        return v
+
+    @field_validator("evidence", "ruled_out", mode="before")
+    @classmethod
+    def _lists(cls, v):
+        return _as_list(v)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _conf(cls, v):
+        # "0.8" and "80%" are 0.8. A bare number above 1 stays invalid (is 5
+        # "5%" or a 0-10 scale?): ambiguous answers are recorded, not repaired.
+        if isinstance(v, str):
+            t = v.strip()
+            try:
+                return float(t.rstrip("%")) / 100 if t.endswith("%") else float(t)
+            except ValueError:
+                return v
+        return v
+
+    @field_validator("ranked_services", mode="before")
+    @classmethod
+    def _ranked_shape(cls, v):
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",")]
+        if isinstance(v, dict):
+            return list(v.keys())
         return v
 
     @field_validator("ranked_services")

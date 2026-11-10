@@ -15,8 +15,9 @@ Providers:
   Scripted      replays canned replies, for tests (no network).
 
 Standard library HTTP only. Retries: provider errors (429, 5xx, timeouts)
-are retried with backoff a few times, then raised; the harness records the
-run as failed, it never invents an answer.
+are retried twice with backoff, then raised; the harness records the run as
+failed, it never invents an answer. Each call times out after 120 s: the first
+laptop run once froze for minutes on one stalled call (300 s x 5 attempts).
 """
 from __future__ import annotations
 
@@ -49,7 +50,7 @@ class LLMError(Exception):
     pass
 
 
-def _post(url: str, headers: dict, body: dict, timeout: float, retries: int = 4) -> dict:
+def _post(url: str, headers: dict, body: dict, timeout: float, retries: int = 2) -> dict:
     data = json.dumps(body).encode()
     last = None
     for attempt in range(retries + 1):
@@ -84,7 +85,7 @@ class OpenAICompat:
     """Chat Completions with tools (OpenAI's wire format, which Ollama serves at /v1)."""
 
     def __init__(self, model: str, base_url: str, api_key: str = "", temperature: float = 0.0,
-                 timeout: float = 300.0, max_tokens: int = 2048, seed: Optional[int] = None):
+                 timeout: float = 120.0, max_tokens: int = 2048, seed: Optional[int] = None):
         self.model, self.base, self.key = model, base_url.rstrip("/"), api_key
         self.temperature, self.timeout, self.max_tokens, self.seed = temperature, timeout, max_tokens, seed
         self.name = f"openai-compat:{model}"
@@ -123,7 +124,7 @@ class Anthropic:
     """The Messages API with tools."""
 
     def __init__(self, model: str, api_key: str, base_url: str = "https://api.anthropic.com", temperature: float = 0.0,
-                 timeout: float = 300.0, max_tokens: int = 2048):
+                 timeout: float = 120.0, max_tokens: int = 2048):
         self.model, self.key, self.base = model, api_key, base_url.rstrip("/")
         self.temperature, self.timeout, self.max_tokens = temperature, timeout, max_tokens
         self.name = f"anthropic:{model}"

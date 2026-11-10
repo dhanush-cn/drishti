@@ -100,6 +100,55 @@ class AgentLoop(unittest.TestCase):
         self.assertIsNone(r.diagnosis.root_cause_service)
 
 
+# A real baseline reply from the first capture 2 run (Qwen 2.5 7B on Ollama):
+# ruled_out written as an object. All 60 baseline replies looked like this and
+# were scored invalid until the list fields accepted it.
+REAL_BASELINE_REPLY = """```json
+{
+  "root_cause_service": "cart",
+  "fault_type": "error",
+  "confidence": 0.8,
+  "ranked_services": ["cart", "payment", "frontend"],
+  "evidence": [
+    "cart service shows a spike in error logs with 'Wasn't able to connect to redis'"
+  ],
+  "ruled_out": {
+    "email": "No significant changes or errors in email service logs",
+    "ad": "No significant changes or errors in ad service logs"
+  },
+  "summary": "The cart service is the most likely root cause."
+}
+```"""
+
+
+class Lenient(unittest.TestCase):
+    def test_real_baseline_reply_parses_with_its_content(self):
+        d = agent.parse_diagnosis(REAL_BASELINE_REPLY)
+        self.assertIsNotNone(d, "a valid answer in a common shape must not be thrown away")
+        self.assertEqual(d.root_cause_service, "cart")
+        self.assertEqual(d.ruled_out, ["email: No significant changes or errors in email service logs",
+                                       "ad: No significant changes or errors in ad service logs"])
+
+    def test_other_shapes(self):
+        d = Diagnosis.model_validate({"root_cause_service": "a", "confidence": "80%", "ranked_services": "a, b", "evidence": "one line"})
+        self.assertEqual((d.confidence, d.ranked_services, d.evidence), (0.8, ["a", "b"], ["one line"]))
+        with self.assertRaises(Exception):
+            Diagnosis.model_validate({"confidence": 90})  # ambiguous scale: invalid, not guessed
+        with self.assertRaises(Exception):
+            Diagnosis.model_validate({"confidence": "very"})
+        with self.assertRaises(Exception):
+            Diagnosis.model_validate({"fault_type": "gremlins"})
+
+
+class Stall(unittest.TestCase):
+    def test_talking_without_acting_stops_after_two_reminders(self):
+        llm = Scripted([Reply("let me think"), Reply("still thinking"), Reply("hmm"), submit()])
+        r = agent.investigate(FakeAPI(), llm, budget=5)
+        self.assertEqual(r.llm_calls, 3, "two reminders, then stop: no fourth call")
+        self.assertIsNone(r.diagnosis.root_cause_service)
+        self.assertIn("reminders", r.diagnosis.summary)
+
+
 class Baseline(unittest.TestCase):
     def test_one_prompt_dump_no_tools(self):
         llm = Scripted([Reply('Here: {"root_cause_service": "checkout", "fault_type": "error", "confidence": 0.9, "ranked_services": ["checkout"]}')])
