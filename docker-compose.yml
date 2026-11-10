@@ -98,6 +98,34 @@ services:
     mem_limit: 256m
     networks:
       default: {}
+  storage-anomalies:
+    # The detector's events -> drishti.anomalies (docs/storage.md decision 11),
+    # so the agent's tools and the evals read alerts with SQL, bounded by time.
+    image: drishti-storage:dev
+    build:
+      context: .
+      target: storage
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      DRISHTI_STORAGE_SIGNAL: "anomalies"
+      DRISHTI_STORAGE_GROUP: "drishti-storage-anomalies"
+      DRISHTI_KAFKA_BROKERS: "kafka:29092"
+      DRISHTI_CLICKHOUSE_URL: "http://clickhouse:8123"
+      # The topic holds 7 days of alerts; all of them belong in the table.
+      DRISHTI_STORAGE_RESET: "earliest"
+      DRISHTI_STORAGE_INSTANCE_ID: "storage-anomalies-1"
+      DRISHTI_STORAGE_SESSION_TIMEOUT: "15s"
+      # A few events a minute: small batches, small budget.
+      DRISHTI_BATCH_BYTES: "1048576"
+      DRISHTI_MAX_PENDING_BYTES: "8388608"
+      GOMEMLIMIT: "64MiB"
+    mem_limit: 128m
+    networks:
+      default: {}
   detector:
     image: drishti-detector:dev
     build:

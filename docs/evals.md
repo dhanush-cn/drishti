@@ -18,7 +18,8 @@ go run ./cmd/kafkadump load -in capture.kd.gz        # → eval.otlp.logs, eval.
 go run ./cmd/storage -signal logs    -topic eval.otlp.logs    -table drishti_eval.logs    -group eval-logs    -reset earliest
 go run ./cmd/storage -signal metrics -topic eval.otlp.metrics -table drishti_eval.metrics -group eval-metrics -reset earliest
 go run ./cmd/detector -replay capture.kd.gz -out events.jsonl
-go run ./cmd/kafkadump load-events -in events.jsonl  # → eval.anomalies (stored by patch 43)
+go run ./cmd/kafkadump load-events -in events.jsonl  # → eval.anomalies
+go run ./cmd/storage -signal anomalies -topic eval.anomalies -table drishti_eval.anomalies -group eval-anomalies -reset earliest
 ```
 
 **Why replay into Kafka instead of writing ClickHouse directly:** the eval data goes through the same

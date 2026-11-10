@@ -64,7 +64,7 @@ func (d *logsDecoder) Decode(value []byte) (int, error) {
 func (d *logsDecoder) Append(w *rowBuf, src Source) int { return AppendLogs(w, &d.req, src) }
 
 // codecs by -signal name.
-var codecs = map[string]Codec{Logs.Name: Logs, Metrics.Name: Metrics}
+var codecs = map[string]Codec{Logs.Name: Logs, Metrics.Name: Metrics, Anomalies.Name: Anomalies}
 
 // CodecFor returns the codec named by cmd/storage's -signal.
 func CodecFor(name string) (Codec, error) {

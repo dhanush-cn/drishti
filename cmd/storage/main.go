@@ -1,7 +1,8 @@
 // Command storage consumes one Kafka topic and writes it to ClickHouse in
 // batches, exactly once per Kafka record (docs/storage.md). -signal picks
-// the message type: logs (otlp.logs → drishti.logs) or metrics
-// (otlp.metrics → drishti.metrics). One process per signal (decision 9).
+// the message type: logs (otlp.logs → drishti.logs), metrics
+// (otlp.metrics → drishti.metrics) or anomalies (anomalies →
+// drishti.anomalies). One process per signal (decision 9).
 package main
 
 import (
@@ -57,10 +58,10 @@ func main() {
 	}
 	if *topic == "" {
 		// DRISHTI_LOGS_TOPIC was the logs-only name before -signal; still honoured.
-		*topic = map[string]string{"logs": env("DRISHTI_LOGS_TOPIC", "otlp.logs"), "metrics": "otlp.metrics"}[codec.Name]
+		*topic = map[string]string{"logs": env("DRISHTI_LOGS_TOPIC", "otlp.logs"), "metrics": "otlp.metrics", "anomalies": "anomalies"}[codec.Name]
 	}
 	if *table == "" {
-		*table = map[string]string{"logs": env("DRISHTI_LOGS_TABLE", "drishti.logs"), "metrics": "drishti.metrics"}[codec.Name]
+		*table = map[string]string{"logs": env("DRISHTI_LOGS_TABLE", "drishti.logs"), "metrics": "drishti.metrics", "anomalies": "drishti.anomalies"}[codec.Name]
 	}
 
 	ch := &storage.CH{URL: *chURL, User: *chUser, Password: *chPass, Table: *table, Columns: codec.Columns, HTTP: &http.Client{}}

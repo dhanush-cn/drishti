@@ -190,6 +190,16 @@ Queries read 3 minutes before `from`, so the window's first point has its predec
 
 These tests skip unless `DRISHTI_TEST_CLICKHOUSE_URL` is set; the Week 5 driver runs them against the laptop's ClickHouse 26.8.
 
+### 11. Anomalies in ClickHouse (Week 5, patch 43)
+
+**What:** `cmd/storage -signal anomalies` (compose `storage-anomalies`) stores every detector event from the `anomalies` topic in `drishti.anomalies` (`004_anomalies.sql`): the schema v1 fields as columns plus the raw JSON (so a field added later is never lost). The agent's "list anomalies" tool and the evals read alerts there, bounded by time, next to the logs and metrics they point at.
+
+**Repeats:** delivery from the detector is at least once (its restart rewind re-sends events, and `updated` repeats while an anomaly stays open). The table stores each Kafka record once, like every table here, and readers collapse repeats by `(id, event)`. The IDs are deterministic.
+
+**Determinism:** `series` is a Go map, and Go randomizes map order, so the codec writes its keys sorted. Otherwise the same event could encode to different bytes, and a retried insert would carry different content under the same dedup token.
+
+**Verified (cloud VM):** codec round trip against ClickHouse 26.9. Capture 2 end to end: `cmd/detector -replay` → 1,158 events (108 opened) → `kafkadump load-events` → `eval.anomalies` → `cmd/storage -signal anomalies` → 1,158 rows, 108 opened.
+
 ## Run
 
 ```bash
@@ -388,3 +398,4 @@ The instrumentation reads clocks four times per iteration and does not change be
 | Histogram start change = reset | drop `start_ts != prev_start` from `HistDeltas` | same: 1 of 27 (verified 10 Nov) |
 | Histogram bounds change yields nothing | drop `bounds = prev_bounds AND length(…)` | same: 1 of 27 (verified 10 Nov) |
 | Times typed UTC | `DateTime64(9)` parameters | on a non-UTC server: `disagree on 72 of 72` (verified 10 Nov) |
+| Anomaly series written in key order | skip the key sort in the anomalies codec | `TestAnomaliesCodec_SameEventSameBytes`: `encoded to different bytes` (verified 10 Nov) |
