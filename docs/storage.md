@@ -147,6 +147,16 @@ Crash between 2 and 3 → the replayed records are already in the table → skip
 - ClickHouse did come back first (`flush_pct` 14–28%, `poll_pct` 1–9% with all partitions busy).
 - **What the prediction missed:** each decoding goroutine got ~2.5× slower in parallel (allocation and buffer growth; heap held at `GOMEMLIMIT`). The whole drain gained 1.46×, not the decode stage's 3.2×.
 
+### 9. One process per signal, behind a codec seam (Week 5, patch 40)
+
+**Why:** Week 5 stores metrics (and later anomalies) next to logs. The consumer's exactly-once rules (decision 1) don't depend on what a record contains, but the code read the logs proto directly. Its per-partition state (`open`, `skip`, the insert pipelines) is keyed by partition **number**, and the resume reads one table's `ingest_progress`. One process reading two topics would collide on both.
+
+**What changed (`internal/storage/codec.go`):** a `Codec` = INSERT column list + a per-partition `Decoder` with two steps, `Decode(value) → rows` and `Append(rowBuf, Source)`. The count comes first because a batch is cut *before* a message that would cross the row limit (a message is never split). `storage.Logs` is the old code moved behind the interface. `Config.Codec` defaults to it, and `CH.Columns` comes from the codec (`New` refuses a mismatch). Each signal runs as its own `cmd/storage` process with its own group, table and instance ID.
+
+**The one promise a codec makes:** a record's rows are a pure function of that record. No state may carry from one record to the next. Otherwise a replayed record could produce different rows, and the dedup token and the resume skip would stop meaning "already stored". This is why metrics are stored raw, not as deltas (decision 10).
+
+**No behaviour change for logs:** every existing test passes unchanged (including byte-identical batches vs a one-record-per-poll reference and the crash-between-insert-and-commit test), and the stored-offset skip proof was re-verified through the seam.
+
 ## Run
 
 ```bash
@@ -330,3 +340,6 @@ The instrumentation reads clocks four times per iteration and does not change be
 | Parallel decode: cut order kept | append each partition's cut batches in reverse | `TestRun_ParallelDecodeKeepsEachPartitionInOrder`: `partition 1 inserts out of order: [38 36 34 …]` (verified) |
 | Parallel decode: really parallel | always take the serial path | `TestAddFetch_DecodesPartitionsInParallelUpToTheLimit`: `max partitions decoding at once = 1, want 3` (verified) |
 | Parallel decode: capped at `-decode-workers` | size the semaphore 64 instead of `workers` | same test: `max partitions decoding at once = 5, want 2` (verified) |
+| Codec row count drives the cut | ignore `n` in the cut condition (`b.rows+0*n`) | `TestCodecSeam_CutsBeforeAMessageThatWouldCrossTheRowLimit`: `first batch = "aaabbb" (6 rows), want "aaa"` (verified 10 Nov) |
+| Columns match the codec | skip the `slices.Equal` check in `New` | `TestNew_RejectsClickHouseColumnsThatDifferFromTheCodec`: `err = <nil>` (verified 10 Nov) |
+| Stored-offset skip, through the seam | `false &&` the skip condition | `TestRun_CrashBetweenInsertAndCommitLeavesNoDuplicates` red (re-verified 10 Nov) |

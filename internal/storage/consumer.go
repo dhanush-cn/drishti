@@ -1,4 +1,6 @@
-// Package storage moves OTLP logs from Kafka into ClickHouse.
+// Package storage moves OTLP signals from Kafka into ClickHouse: one Kafka
+// topic into one table per process, the message type given by a Codec
+// (codec.go). Nothing below depends on which codec.
 //
 // Delivery into ClickHouse is exactly-once per Kafka record, without
 // transactions (docs/storage.md):
@@ -40,7 +42,6 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
-	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 )
 
 type Config struct {
@@ -67,6 +68,8 @@ type Config struct {
 	DecodeWorkers int
 	CH            *CH
 	Log           *slog.Logger
+	// Codec is the message type and table layout. Zero value = Logs.
+	Codec Codec
 
 	// InstanceID makes the consumer a static group member (KIP-345). A
 	// restarted process with the same ID takes its predecessor's place at
@@ -109,11 +112,11 @@ type Consumer struct {
 	lastRows int64
 
 	mu       sync.Mutex
-	open     map[int32]*batch                            // being filled
-	ready    []*batch                                    // full or due, to hand to an insert this iteration
-	skip     map[int32]int64                             // records at or below this offset are already stored
-	fatal    error                                       // set by a callback or an insert; Run returns it
-	decoders map[int32]*collogs.ExportLogsServiceRequest // one reusable request per partition (decode.go)
+	open     map[int32]*batch  // being filled
+	ready    []*batch          // full or due, to hand to an insert this iteration
+	skip     map[int32]int64   // records at or below this offset are already stored
+	fatal    error             // set by a callback or an insert; Run returns it
+	decoders map[int32]Decoder // one per partition (decode.go)
 
 	// testDecodeHook, if set, runs at the start of each partition's decode
 	// (decode.go). Tests set it before Run to observe parallelism.
@@ -150,6 +153,15 @@ func New(cfg Config) (*Consumer, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
+	if cfg.Codec.NewDecoder == nil {
+		cfg.Codec = Logs
+	}
+	if cfg.CH != nil && cfg.CH.Columns == nil {
+		cfg.CH.Columns = cfg.Codec.Columns
+	}
+	if cfg.CH != nil && !slices.Equal(cfg.CH.Columns, cfg.Codec.Columns) {
+		return nil, fmt.Errorf("clickhouse client columns %v differ from codec %s columns %v", cfg.CH.Columns, cfg.Codec.Name, cfg.Codec.Columns)
+	}
 	if cfg.DecodeWorkers <= 0 {
 		cfg.DecodeWorkers = runtime.GOMAXPROCS(0)
 	}
@@ -160,7 +172,7 @@ func New(cfg Config) (*Consumer, error) {
 		return nil, fmt.Errorf("max pending bytes %d is below one batch (%d): the loop could never hand a full batch to an insert", cfg.MaxPendingBytes, cfg.Limits.MaxBytes)
 	}
 	c := &Consumer{cfg: cfg, open: map[int32]*batch{}, skip: map[int32]int64{},
-		decoders: map[int32]*collogs.ExportLogsServiceRequest{},
+		decoders: map[int32]Decoder{},
 		parts:    map[int32]*partState{}, stored: map[int32]*kgo.Record{}}
 	c.idle = sync.NewCond(&c.mu)
 	reset := kgo.NewOffset().AtStart()

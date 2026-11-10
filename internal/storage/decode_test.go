@@ -11,15 +11,14 @@ import (
 
 	"github.com/dhanush-cn/drishti/internal/loadgen"
 	"github.com/twmb/franz-go/pkg/kgo"
-	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	"google.golang.org/protobuf/proto"
 )
 
 // bareConsumer is a Consumer with no Kafka client, for the decode stage.
 func bareConsumer(lim Limits, workers int) *Consumer {
 	return &Consumer{
-		cfg:  Config{Topic: topic, Limits: lim, DecodeWorkers: workers, Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
-		open: map[int32]*batch{}, skip: map[int32]int64{}, decoders: map[int32]*collogs.ExportLogsServiceRequest{},
+		cfg:  Config{Topic: topic, Codec: Logs, Limits: lim, DecodeWorkers: workers, Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		open: map[int32]*batch{}, skip: map[int32]int64{}, decoders: map[int32]Decoder{},
 	}
 }
 

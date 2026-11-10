@@ -19,7 +19,10 @@ type CH struct {
 	User     string
 	Password string
 	Table    string // e.g. drishti.logs
-	HTTP     *http.Client
+	// Columns is the INSERT column list in RowBinary order; New sets it
+	// from the consumer's codec when empty.
+	Columns []string
+	HTTP    *http.Client
 }
 
 // InsertSettings are sent with every insert, explicitly, because the
@@ -47,7 +50,11 @@ func insertQuery(table string, cols []string) string {
 // ClickHouse's exception text.
 func (c *CH) Insert(ctx context.Context, token string, body []byte) error {
 	q := url.Values{}
-	q.Set("query", insertQuery(c.Table, LogColumns))
+	cols := c.Columns
+	if cols == nil {
+		cols = LogColumns
+	}
+	q.Set("query", insertQuery(c.Table, cols))
 	q.Set("async_insert", "0")
 	q.Set("insert_deduplication_token", token)
 	q.Set("deduplicate_blocks_in_dependent_materialized_views", "1")

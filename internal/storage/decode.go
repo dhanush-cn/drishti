@@ -6,15 +6,13 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
-	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 // Parallel decode (docs/storage.md, "Parallel decode").
 //
 // After background inserts (patch 17) the loop's only serial work was
 // decoding every Kafka record (proto.Unmarshal) and encoding its rows
-// (AppendLogs), on one goroutine: ~1 core, ~125–142k rows/s on the laptop.
+// (the codec's Decode + Append), on one goroutine: ~1 core, ~125–142k rows/s on the laptop.
 // Batches are per Kafka partition and nothing in one partition's batch
 // depends on another's, so each poll's records are decoded fork-join: one
 // goroutine per partition in the poll (at most DecodeWorkers at once), each
@@ -59,7 +57,7 @@ type partWork struct {
 
 	open  *batch // taken out of c.open; nil if the partition had none
 	ready []*batch
-	dec   *collogs.ExportLogsServiceRequest // reused across messages of this partition
+	dec   Decoder // the partition's own decoder, reused across its messages
 
 	// Accumulated locally, added to Stats once per partition per poll:
 	// per-record atomics from six goroutines would share a cache line.
@@ -157,12 +155,12 @@ func byPartition(fs kgo.Fetches, topic string) []partRecords {
 	return out
 }
 
-// decoder returns partition p's reusable request. Called with mu held, by
-// the loop only; release() drops it with the partition.
-func (c *Consumer) decoder(p int32) *collogs.ExportLogsServiceRequest {
+// decoder returns partition p's decoder. Called with mu held, by the loop
+// only; release() drops it with the partition.
+func (c *Consumer) decoder(p int32) Decoder {
 	d := c.decoders[p]
 	if d == nil {
-		d = &collogs.ExportLogsServiceRequest{}
+		d = c.cfg.Codec.NewDecoder()
 		c.decoders[p] = d
 	}
 	return d
@@ -184,20 +182,14 @@ func (c *Consumer) decodePartition(w *partWork) {
 			w.skipped++
 			continue
 		}
-		proto.Reset(w.dec)
-		if err := proto.Unmarshal(r.Value, w.dec); err != nil {
+		n, err := w.dec.Decode(r.Value)
+		if err != nil {
 			// A message the receiver produced but we cannot decode would
 			// wedge the partition forever if retried; log it with its
 			// coordinates and move on. Counted, never silent.
 			w.decodeErrs++
 			c.cfg.Log.Error("undecodable message skipped", "partition", r.Partition, "offset", r.Offset, "err", err)
 			continue
-		}
-		n := 0
-		for _, rl := range w.dec.GetResourceLogs() {
-			for _, sl := range rl.GetScopeLogs() {
-				n += len(sl.GetLogRecords())
-			}
 		}
 		day := dayOf(r.Timestamp)
 		b := w.open
@@ -210,7 +202,7 @@ func (c *Consumer) decodePartition(w *partWork) {
 		if b == nil {
 			b = &batch{topic: r.Topic, partition: r.Partition, day: day, first: r.Offset, started: time.Now()}
 		}
-		b.rows += AppendLogs(&b.buf, w.dec, Source{Partition: r.Partition, Offset: r.Offset, Received: r.Timestamp})
+		b.rows += w.dec.Append(&b.buf, Source{Partition: r.Partition, Offset: r.Offset, Received: r.Timestamp})
 		b.last = r
 		if b.full(lim) {
 			w.ready = append(w.ready, b)
