@@ -94,6 +94,15 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: dict | 
                          "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls]})
 
             submit = next((c for c in calls if c.name == "submit_diagnosis"), None)
+            others = [c for c in calls if c.name != "submit_diagnosis"]
+            if submit is not None and others and not out_of_budget:
+                # An answer sent in the same turn as tool calls was written before their results existed
+                # (capture 2, v2: 4 of 60 runs, all wrong). Run the calls, refuse the answer, ask again.
+                calls = others
+                msgs.append({"role": "tool", "tool_call_id": submit.id, "name": submit.name, "content":
+                             "not accepted: submitted in the same turn as tool calls whose results you had not seen. "
+                             "Read the results below, then call submit_diagnosis on its own."})
+                submit = None
             if submit is not None:
                 d = parse_diagnosis(submit.arguments)
                 res.diagnosis, res.valid_answer = (d, True) if d else (Diagnosis.unsure("invalid submit_diagnosis arguments"), False)

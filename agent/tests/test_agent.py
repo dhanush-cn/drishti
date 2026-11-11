@@ -170,6 +170,23 @@ class Stall(unittest.TestCase):
         self.assertIn("reminders", r.diagnosis.summary)
 
 
+class BatchedSubmit(unittest.TestCase):
+    def test_answer_sent_with_tool_calls_is_refused_until_results_are_read(self):
+        llm = Scripted([
+            Reply("", [ToolCall("c1", "spans", {"service": "payment"}), ToolCall("s0", "submit_diagnosis", {"root_cause_service": None, "confidence": 0.8})]),
+            submit(),
+        ])
+        r = agent.investigate(FakeAPI(), llm, budget=5)
+        self.assertEqual([t.name for t in r.tool_calls], ["spans"], "the batched call ran")
+        self.assertEqual(r.diagnosis.root_cause_service, "payment", "the answer is the one sent after the results")
+        refusal = [m for m in llm.sent[1][1] if m.get("tool_call_id") == "s0"]
+        self.assertIn("not accepted", refusal[0]["content"])
+
+    def test_lone_submit_is_accepted_at_once(self):
+        r = agent.investigate(FakeAPI(), Scripted([submit()]), budget=5)
+        self.assertEqual(r.llm_calls, 1)
+
+
 class Baseline(unittest.TestCase):
     def test_one_prompt_dump_no_tools(self):
         llm = Scripted([Reply('Here: {"root_cause_service": "checkout", "fault_type": "error", "confidence": 0.9, "ranked_services": ["checkout"]}')])
