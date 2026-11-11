@@ -91,7 +91,8 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: dict | 
             res.usage.add(reply.usage)
             calls = reply.tool_calls
             msgs.append({"role": "assistant", "content": reply.text,
-                         "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls]})
+                         "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls],
+                         **({"raw": reply.raw} if reply.raw else {})})
 
             submit = next((c for c in calls if c.name == "submit_diagnosis"), None)
             others = [c for c in calls if c.name != "submit_diagnosis"]

@@ -188,6 +188,15 @@ changed service", and it runs the whole harness without a model. The alert half 
 - `ollama`: OpenAI-compatible `/v1` at localhost:11434, for free iteration on the RTX 5050;
 - `openai`: any OpenAI-compatible hosted API, given `--base-url`;
 - `anthropic`: the Messages API.
+- Gemini (patch 50): `openai` with `--base-url https://generativelanguage.googleapis.com/v1beta/openai`.
+  - Assistant turns go back to the API exactly as they came (`raw`). Gemini 3 models attach thought
+    signatures to their turns and expect them on the next request; a rebuilt message would drop them.
+  - Free tiers limit requests per minute and per day. `--rpm N` spaces calls to N per minute, and a 429
+    is waited out (Retry-After, else 15 s doubling to 2 min, 5 times) before the run is recorded failed.
+  - Thinking can't be turned off on Gemini 3; `--reasoning-effort low` keeps it small, and
+    `--max-tokens` leaves room for it.
+  - `python -m drishti_agent.evals.hostcheck` runs one two-turn tool call first, so a wrong key,
+    model id or rejected turn fails in seconds, not one scenario into the run.
 
 Temperature 0. Calls time out after 120 s; provider errors are retried twice with backoff, then recorded as failed runs. Cost =
 tokens × the prices you pass (`--price-in/--price-out`, USD per million tokens). Nothing is priced from

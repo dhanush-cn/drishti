@@ -5,7 +5,11 @@
 Messages are kept in one neutral form and translated per provider:
 
     {"role": "user", "content": "..."}
-    {"role": "assistant", "content": "...", "tool_calls": [{"id", "name", "arguments": {...}}]}
+    {"role": "assistant", "content": "...", "tool_calls": [{"id", "name", "arguments": {...}}], "raw": {...}}
+
+"raw" is the provider's own assistant message, kept so it goes back exactly as it
+came: Gemini 3 attaches thought signatures to its turns and needs them returned
+on the next request, and a rebuilt message would drop fields we don't know of.
     {"role": "tool", "tool_call_id": "...", "name": "...", "content": "..."}
 
 Providers:
@@ -45,16 +49,20 @@ class Reply:
     text: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
+    raw: Optional[dict] = None   # the provider's assistant message, returned verbatim on the next turn
 
 
 class LLMError(Exception):
     pass
 
 
-def _post(url: str, headers: dict, body: dict, timeout: float, retries: int = 2) -> dict:
+def _post(url: str, headers: dict, body: dict, timeout: float, retries: int = 2, rate_limit_retries: int = 2) -> dict:
+    """Provider errors are retried `retries` times; 429 (rate limit) up to
+    `rate_limit_retries` times, waiting Retry-After or 15 s, 30 s, 60 s..."""
     data = json.dumps(body).encode()
     last = None
-    for attempt in range(retries + 1):
+    attempt = limited = 0
+    while True:
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -62,12 +70,19 @@ def _post(url: str, headers: dict, body: dict, timeout: float, retries: int = 2)
         except urllib.error.HTTPError as e:
             msg = e.read().decode(errors="replace")[:500]
             last = LLMError(f"HTTP {e.code}: {msg}")
-            if e.code not in (408, 409, 429, 500, 502, 503, 504, 529):
+            if e.code == 429 and limited < rate_limit_retries:
+                ra = e.headers.get("Retry-After", "")
+                time.sleep(float(ra) if ra.replace(".", "", 1).isdigit() else min(15 * 2 ** limited, 120))
+                limited += 1
+                continue
+            if e.code not in (408, 409, 500, 502, 503, 504, 529):
                 raise last from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last = LLMError(f"request failed: {e}")
+        if attempt >= retries:
+            raise last
         time.sleep(min(2 ** attempt, 20))
-    raise last
+        attempt += 1
 
 
 def _args(raw: Any) -> dict:
@@ -86,15 +101,22 @@ class OpenAICompat:
     """Chat Completions with tools (OpenAI's wire format, which Ollama serves at /v1)."""
 
     def __init__(self, model: str, base_url: str, api_key: str = "", temperature: float = 0.0,
-                 timeout: float = 120.0, max_tokens: int = 2048, seed: Optional[int] = None):
+                 timeout: float = 120.0, max_tokens: int = 2048, seed: Optional[int] = None,
+                 rpm: float = 0.0, reasoning_effort: str = "", rate_limit_retries: int = 2):
         self.model, self.base, self.key = model, base_url.rstrip("/"), api_key
         self.temperature, self.timeout, self.max_tokens, self.seed = temperature, timeout, max_tokens, seed
+        # rpm > 0 spaces requests to stay under a per-minute quota (free tiers) instead of
+        # hitting 429s; reasoning_effort is passed through for thinking models.
+        self.interval, self.reasoning_effort, self.rate_limit_retries = (60.0 / rpm if rpm else 0.0), reasoning_effort, rate_limit_retries
+        self._last = 0.0
         self.name = f"openai-compat:{model}"
 
     def chat(self, system: str, messages: list[dict], tools: Optional[list[dict]] = None) -> Reply:
         msgs = [{"role": "system", "content": system}]
         for m in messages:
-            if m["role"] == "assistant" and m.get("tool_calls"):
+            if m["role"] == "assistant" and m.get("raw"):
+                msgs.append(m["raw"])
+            elif m["role"] == "assistant" and m.get("tool_calls"):
                 msgs.append({"role": "assistant", "content": m.get("content") or "",
                              "tool_calls": [{"id": c["id"], "type": "function",
                                              "function": {"name": c["name"], "arguments": json.dumps(c["arguments"])}}
@@ -108,8 +130,14 @@ class OpenAICompat:
             body["seed"] = self.seed
         if tools:
             body["tools"] = [{"type": "function", "function": t} for t in tools]
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
-        r = _post(f"{self.base}/chat/completions", headers, body, self.timeout)
+        wait = self._last + self.interval - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._last = time.monotonic()
+        r = _post(f"{self.base}/chat/completions", headers, body, self.timeout, rate_limit_retries=self.rate_limit_retries)
         try:
             msg = r["choices"][0]["message"]
         except (KeyError, IndexError):
@@ -117,7 +145,9 @@ class OpenAICompat:
         calls = [ToolCall(id=c.get("id") or f"call_{i}", name=c["function"]["name"], arguments=_args(c["function"].get("arguments")))
                  for i, c in enumerate(msg.get("tool_calls") or [])]
         u = r.get("usage") or {}
-        return Reply(text=msg.get("content") or "", tool_calls=calls,
+        raw = {k: v for k, v in msg.items() if v is not None}
+        raw["role"] = "assistant"
+        return Reply(text=msg.get("content") or "", tool_calls=calls, raw=raw,
                      usage=Usage(input_tokens=u.get("prompt_tokens", 0), output_tokens=u.get("completion_tokens", 0)))
 
 
@@ -178,7 +208,8 @@ class Scripted:
         return self.replies.pop(0)
 
 
-def from_args(provider: str, model: str, base_url: str = "", api_key_env: str = "", temperature: float = 0.0, seed: Optional[int] = None):
+def from_args(provider: str, model: str, base_url: str = "", api_key_env: str = "", temperature: float = 0.0, seed: Optional[int] = None,
+              rpm: float = 0.0, reasoning_effort: str = "", max_tokens: int = 2048):
     key = os.environ.get(api_key_env, "") if api_key_env else ""
     if provider == "heuristic":
         return Heuristic()
@@ -187,7 +218,9 @@ def from_args(provider: str, model: str, base_url: str = "", api_key_env: str = 
     if provider == "openai":
         if not base_url:
             raise LLMError("--base-url is required for an OpenAI-compatible hosted provider")
-        return OpenAICompat(model, base_url, key, temperature=temperature, seed=seed)
+        # Free tiers: pace to rpm and wait out 429s for up to ~4 minutes rather than fail the run.
+        return OpenAICompat(model, base_url, key, temperature=temperature, seed=seed, rpm=rpm,
+                            reasoning_effort=reasoning_effort, max_tokens=max_tokens, rate_limit_retries=5 if rpm else 2)
     if provider == "anthropic":
         if not key:
             raise LLMError(f"set the API key in ${api_key_env or 'ANTHROPIC_API_KEY'}")

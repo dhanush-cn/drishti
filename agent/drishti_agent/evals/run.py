@@ -61,6 +61,9 @@ def main(argv=None) -> int:
     ap.add_argument("--budget", type=int, default=agent.DEFAULT_BUDGET)
     ap.add_argument("--scenarios", default="", help="comma-separated flags to run (default all)")
     ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--rpm", type=float, default=0.0, help="pace model requests to this many per minute (free tiers); 0 = no pacing")
+    ap.add_argument("--reasoning-effort", default="", help="passed to OpenAI-compatible APIs (thinking models), e.g. low")
+    ap.add_argument("--max-tokens", type=int, default=2048, help="output cap per model call (thinking models may need more)")
     ap.add_argument("--held-out", action="store_true", help="final scoring of an untouched recording: requires FROZEN.json")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
@@ -80,9 +83,10 @@ def main(argv=None) -> int:
     if a.scenarios:
         keep = set(a.scenarios.split(","))
         scenarios = [s for s in scenarios if s.flag in keep]
-    llm = from_args(a.provider, a.model, a.base_url, a.api_key_env or ("ANTHROPIC_API_KEY" if a.provider == "anthropic" else ""), a.temperature)
+    llm = from_args(a.provider, a.model, a.base_url, a.api_key_env or ("ANTHROPIC_API_KEY" if a.provider == "anthropic" else ""), a.temperature,
+                    rpm=a.rpm, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens)
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,
-            "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature,
+            "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature, "rpm": a.rpm, "reasoning_effort": a.reasoning_effort, "max_tokens": a.max_tokens,
             "price_in": a.price_in, "price_out": a.price_out, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     print(json.dumps(meta))
 

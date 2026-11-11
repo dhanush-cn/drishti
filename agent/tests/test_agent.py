@@ -322,5 +322,117 @@ class Wire(unittest.TestCase):
             OpenAICompat("m", f"http://127.0.0.1:{srv.server_port}/v1").chat("s", [{"role": "user", "content": "x"}])
 
 
+class Hosted(unittest.TestCase):
+    """What a hosted free tier needs: turns returned verbatim, pacing, waiting out 429s."""
+
+    SIGNED = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+        {"id": "g1", "type": "function", "function": {"name": "spans", "arguments": "{\"service\": \"ad\"}"},
+         "extra_content": {"google": {"thought_signature": "c2lnLTE="}}}]}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
+
+    def stub(self, statuses):
+        """Answers each POST with the next status (200 = SIGNED); records bodies and times."""
+        seen = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                import time as _t
+                seen.append((_t.monotonic(), json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                code = statuses.pop(0) if statuses else 200
+                out = json.dumps(Hosted.SIGNED if code == 200 else {"error": "quota"}).encode()
+                self.send_response(code)
+                if code == 429:
+                    self.send_header("Retry-After", "0")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_port}/v1", seen
+
+    def test_assistant_turn_goes_back_with_its_thought_signature(self):
+        url, seen = self.stub([])
+        llm = OpenAICompat("gemini", url, api_key="k")
+        # Turn 1 returns a signed tool call; turn 2 must carry the signature back.
+        r1 = llm.chat("sys", [{"role": "user", "content": "go"}], [{"name": "spans", "description": "d", "parameters": {}}])
+        hist = [{"role": "user", "content": "go"},
+                {"role": "assistant", "content": r1.text, "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in r1.tool_calls], "raw": r1.raw},
+                {"role": "tool", "tool_call_id": "g1", "name": "spans", "content": "{}"}]
+        llm.chat("sys", hist, None)
+        sent = seen[1][1]["messages"][2]
+        self.assertEqual(sent["tool_calls"][0]["extra_content"], {"google": {"thought_signature": "c2lnLTE="}})
+        self.assertEqual(sent["role"], "assistant")
+
+    def test_agent_loop_keeps_the_raw_turn(self):
+        r = Reply("", [ToolCall("c1", "spans", {"service": "ad"})], raw={"role": "assistant", "tool_calls": [{"id": "c1", "extra_content": {"x": 1}}]})
+        llm = Scripted([r, submit()])
+        agent.investigate(FakeAPI(), llm, budget=5)
+        self.assertEqual(llm.sent[1][1][1].get("raw"), r.raw)
+
+    def test_requests_are_paced_to_rpm(self):
+        url, seen = self.stub([])
+        llm = OpenAICompat("gemini", url, rpm=300)  # one request per 0.2 s
+        for _ in range(3):
+            llm.chat("s", [{"role": "user", "content": "x"}])
+        gaps = [b[0] - a[0] for a, b in zip(seen, seen[1:])]
+        self.assertTrue(all(g >= 0.19 for g in gaps), gaps)
+
+    def test_rate_limit_is_waited_out(self):
+        url, seen = self.stub([429, 429, 429])
+        r = OpenAICompat("gemini", url, rate_limit_retries=5).chat("s", [{"role": "user", "content": "x"}])
+        self.assertEqual(len(seen), 4)
+        self.assertEqual(r.tool_calls[0].name, "spans")
+
+    def test_rate_limit_retries_are_bounded(self):
+        url, seen = self.stub([429] * 10)
+        with self.assertRaises(LLMError):
+            OpenAICompat("gemini", url, rate_limit_retries=2).chat("s", [{"role": "user", "content": "x"}])
+        self.assertEqual(len(seen), 3)
+
+
+class HostCheck(unittest.TestCase):
+    def run_check(self, second):
+        seen, replies = [], [Hosted.SIGNED, second]
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                seen.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                out = json.dumps(replies.pop(0)).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        from drishti_agent.evals import hostcheck
+        import contextlib, io, os
+        os.environ["HC_KEY"] = "k"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = hostcheck.main(["--provider", "openai", "--model", "g", "--base-url", f"http://127.0.0.1:{srv.server_port}/v1", "--api-key-env", "HC_KEY"])
+        return rc, buf.getvalue(), seen
+
+    def test_ok_and_signature_returned(self):
+        rc, out, seen = self.run_check({"choices": [{"message": {"content": "degraded"}}]})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("extra fields kept: extra_content", out)
+        self.assertEqual(seen[1]["messages"][2]["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "c2lnLTE=")
+
+    def test_fails_when_second_turn_does_not_answer(self):
+        rc, out, _ = self.run_check(Hosted.SIGNED)
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL", out)
+
+
 if __name__ == "__main__":
     unittest.main()
