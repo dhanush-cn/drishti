@@ -173,14 +173,16 @@ recordings. They decide what the agent looks at first, not what it concludes.
 tools would show at a glance: overview, alerts, and every service's top log templates, capped at
 48,000 characters.
 
-**Heuristic floor (`--provider heuristic`, not a model):** names the first service the triage overview
-lists with changes. It shows whether the LLM adds anything over "pick the top changed service", and it
-runs the whole harness without a model. **Capture 2 (the tuning recording):**
+**Heuristic floor (`--provider heuristic`, not a model):** trusts the page. End-to-end it names the
+service of the alert that paged it; agent-only (no alert) it names the first service the triage overview
+lists with changes. It shows whether the LLM adds anything over "repeat the alert" or "pick the top
+changed service", and it runs the whole harness without a model. The alert half came in patch 49 (§5). **Capture 2 (the tuning recording):**
 - v1 (5-minute triage): agent-only top-1 **5/10**, top-3 7/10; end-to-end top-1 **1/10**.
 - v2 (2-minute triage): agent-only top-1 **4/10**, top-3 7/10; end-to-end top-1 **1/10**. Six scenarios
   changed answer each way; the floor is unstable to the window, which is why it is a floor and not tuned.
-- End-to-end stays low: at the first alert, tens of seconds into a fault, the busiest changed service is
-  often still the previous scenario's. An agent that picks its own windows has room to beat that.
+- End-to-end, the top changed service was often still the previous scenario's, but the alert's own
+  service was the root cause in **7/10**. Repeating the alert (patch 49): end-to-end top-1 **7/10**,
+  agent-only unchanged at 4/10. That 7/10 is the bar any end-to-end system has to beat.
 
 **Providers (`llm.py`):**
 - `ollama`: OpenAI-compatible `/v1` at localhost:11434, for free iteration on the RTX 5050;
@@ -263,4 +265,30 @@ Runs 1–3 at temperature 0 gave the same answer in most cells, so 3 runs mostly
 - **emailMemoryLeak, 0/3.** That scenario starts right after the laptop slept, so its traffic baseline
   is distorted. Not tuned for; it may stay a miss.
 
-v2 prompts are `57bbd9adf6b6`. Their capture 2 numbers come from the next run; none are claimed here.
+**v2 run** (prompts `57bbd9adf6b6`, code `f326ec8` on the laptop = patches 40–47; 3 runs per cell):
+
+| | top-1 | top-3 | confidently wrong | unsure |
+|---|---|---|---|---|
+| agent, agent-only | 14/30 (v1 19) | 23/30 | 10/30 | 6/30 |
+| agent, end-to-end | 11/30 (v1 5) | 22/30 | 19/30 | 0/30 |
+| baseline, agent-only | 15/30 | 30/30 | 15/30 | 0/30 |
+| baseline, end-to-end | 24/30 | 27/30 | 6/30 | 0/30 |
+| floor (patch 49), agent-only / end-to-end | 4/10 / 7/10 | | | |
+
+What it showed:
+- **The briefing helped end-to-end (5 → 11), but the agent still loses to the alert.** It names the
+  alert's service far less often than the baseline does: it investigates, then talks itself out of it.
+  Two patterns: following the callee chain past the root cause (recommendationCacheFailure:
+  recommendation's cache fails, it calls product-catalog more, the agent names product-catalog) and
+  misreading numbers (it wrote "latency increased from 38.8 ms to 32.4 ms").
+- **The baseline, with the same briefing and no tools, scores 24/30 end-to-end**, above the floor (21/30
+  over 3 runs) only through productCatalogFailure. One prompt plus the alert is most of the signal here.
+- **Agent-only fell 19 → 14.** 4 runs answered in the same turn as their tool calls, before any result
+  (patch 48 refuses that); 2 runs stalled until the reminder limit; productCatalogLockContention went 3/3
+  → 0/3 and recommendationCacheFailure 3/3 → 0/3 with long tool chains.
+- **Calibration did not take:** wrong answers still came at confidence 0.8–0.9.
+- Repeats at temperature 0 disagree more: 11 of 20 agent cells have mixed answers (v1: 7 of 20). Mean
+  input tokens per run: 30k agent-only (v1 35k), 46k end-to-end (v1 37k). The run took 3 h 13 min
+  (v1: 49 min).
+
+Read with care: 10 scenarios, one recording, a 7B model. These are tuning numbers, not results.

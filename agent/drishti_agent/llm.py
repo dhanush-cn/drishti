@@ -22,6 +22,7 @@ laptop run once froze for minutes on one stalled call (300 s x 5 attempts).
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 import urllib.error
@@ -195,12 +196,18 @@ def from_args(provider: str, model: str, base_url: str = "", api_key_env: str = 
 
 
 class Heuristic:
-    """Not a model: names the first service the triage overview lists with
-    changes, the fault type read from the change text. A floor for the evals
-    (an LLM that can't beat "pick the top changed service" isn't earning its
-    place) and a way to run the whole harness without a model."""
+    """Not a model: trusts the page. With an alert in the briefing (end-to-end)
+    it names the alert's service; without one (agent-only) it names the first
+    service the triage overview lists with changes. A floor for the evals (an
+    LLM that can't beat "repeat the alert" or "pick the top changed service"
+    isn't earning its place) and a way to run the whole harness without a model.
+    The alert half was added after capture 2: the alert's own service was the
+    root cause in 7 of 10 scored scenarios, and a floor that ignored it read 1/10."""
 
-    name = "heuristic:top-changed-service"
+    name = "heuristic:alert-else-top-changed"
+
+    _RULES = (("error", "error"), ("slow", "latency"), ("memory", "memory"), ("cpu", "cpu"), ("traffic", "traffic"))
+    _ALERT = re.compile(r"by the detector's alert: service (\S+), rule (\S+?)[ ,]")
 
     _KINDS = (("error ratio", "error"), ("memory rising", "memory"), ("CPU", "cpu"), ("p95", "latency"),
               ("server calls", "traffic"), ("log lines", "error"))
@@ -216,7 +223,14 @@ class Heuristic:
                     break
                 svc, _, rest = line[2:].partition(": ")
                 changed.append({"service": svc, "changes": rest.split("; ")})
-        if not changed:
+        m = self._ALERT.search(first)
+        if m:
+            svc, rule = m.group(1), m.group(2)
+            kind = next((k for needle, k in self._RULES if needle in rule), "unknown")
+            d = {"root_cause_service": svc, "fault_type": kind, "confidence": 0.5,
+                 "ranked_services": [svc] + [c["service"] for c in changed if c["service"] != svc][:2],
+                 "evidence": [f"paged by {rule} on {svc}"], "summary": "the alerting service"}
+        elif not changed:
             d = {"root_cause_service": None, "fault_type": "unknown", "confidence": 0.0, "ranked_services": [],
                  "evidence": [], "summary": "no service crossed a threshold"}
         else:

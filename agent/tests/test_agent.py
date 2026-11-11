@@ -187,6 +187,21 @@ class BatchedSubmit(unittest.TestCase):
         self.assertEqual(r.llm_calls, 1)
 
 
+class HeuristicFloor(unittest.TestCase):
+    def test_end_to_end_names_the_alerting_service(self):
+        from drishti_agent.llm import Heuristic
+        alert = {"service": "recommendation", "rule": "log_template_spike", "series": {}, "opened_at": "2026-11-03T18:10:20Z"}
+        r = agent.investigate(FakeAPI(), Heuristic(), budget=5, alert=alert)
+        self.assertEqual(r.diagnosis.root_cause_service, "recommendation")
+        e = agent.investigate(FakeAPI(), Heuristic(), budget=5, alert={**alert, "service": "frontend", "rule": "span_slow", "series": {"route": "/api"}})
+        self.assertEqual((e.diagnosis.root_cause_service, e.diagnosis.fault_type.value), ("frontend", "latency"))
+
+    def test_agent_only_still_has_no_alert_to_repeat(self):
+        from drishti_agent.llm import Heuristic
+        r = agent.investigate(FakeAPI(), Heuristic(), budget=5)
+        self.assertIsNone(r.diagnosis.root_cause_service, "the fake overview lists no changed service")
+
+
 class Baseline(unittest.TestCase):
     def test_one_prompt_dump_no_tools(self):
         llm = Scripted([Reply('Here: {"root_cause_service": "checkout", "fault_type": "error", "confidence": 0.9, "ranked_services": ["checkout"]}')])
