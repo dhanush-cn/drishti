@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,5 +199,44 @@ func TestLoadEvents_KeysByServiceOnTheDetectorsPartitionAtDetectedAt(t *testing.
 	k2.create("eval.anomalies", 6, "-1")
 	if err := loadEventsCmd(context.Background(), []string{"-brokers", k2.addrs, "-in", bad}); err == nil {
 		t.Fatal("a line without service/detected_at was accepted")
+	}
+}
+
+// Capture B stopped at MESSAGE_TOO_LARGE: the loader batched up to 16 MiB, and
+// Kafka refuses a batch over the topic's max.message.bytes (1 MiB by default)
+// even compressed (13 MB of records came to 1.97 MB). Records of up to 900 KiB
+// (the receiver's cap) must load into a topic left at the default.
+func TestLoad_BatchesFitTheBrokersDefaultMessageSize(t *testing.T) {
+	k := newCluster(t)
+	k.create("eval.otlp.logs", 1, "-1")
+	k.create("eval.otlp.metrics", 1, "-1")
+	old := time.Date(2026, 11, 3, 17, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "big.kd.gz")
+	f, _ := os.Create(path)
+	w, err := kdump.NewWriter(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rnd := rand.New(rand.NewPCG(1, 2))
+	const n = 24
+	for i := range n {
+		v := make([]byte, 300<<10) // incompressible: compression cannot rescue an oversized batch
+		for j := range v {
+			v[j] = byte(rnd.Uint32())
+		}
+		if i == 0 {
+			v = append(v, make([]byte, 600<<10)...) // one record near the receiver's 900 KiB cap
+		}
+		if err := w.Write(&kgo.Record{Topic: "otlp.metrics", Partition: 0, Offset: int64(i), Value: v, Timestamp: old.Add(time.Duration(i) * time.Millisecond)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+	f.Close()
+	if err := loadCmd(context.Background(), []string{"-brokers", k.addrs, "-in", path}); err != nil {
+		t.Fatal(err)
+	}
+	if got := k.consumeAll("eval.otlp.metrics", n); len(got) != n {
+		t.Fatalf("%d records, want %d", len(got), n)
 	}
 }

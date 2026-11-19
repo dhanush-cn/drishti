@@ -161,7 +161,11 @@ func newProducer(brokers string) (*kgo.Client, error) {
 		// Every record carries its partition: the recording's (load), or the
 		// one the live detector's partitioner gives its key (load-events).
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
-		kgo.ProducerBatchMaxBytes(16<<20),
+		// Kafka refuses a batch over the topic's max.message.bytes (1 MiB by
+		// default) even after compression, and the eval topics keep the
+		// default. Capture B stopped at a 13 MB batch (1.97 MB compressed).
+		// Same cap as the receiver, whose records are at most 900 KiB.
+		kgo.ProducerBatchMaxBytes(1_000_000),
 		kgo.MaxBufferedBytes(256<<20),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 	)
