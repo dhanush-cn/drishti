@@ -329,10 +329,29 @@ Read with care: 10 scenarios, one recording, a 7B model. These are tuning number
   not decide, hence the next two.
 - The paged briefing states the rule: the root cause changed at or after the onset; an earlier incident
   goes in ruled_out. Same text for agent and baseline.
-- **Onset check:** when the agent names a service other than the paging one, the answer is refused once
-  with a request to check that service's timeseries against the onset; the next answer stands, the same
-  one included. Recorded per run as `onset_check` (the first-named service), so a check that turns a right
-  answer wrong is visible. Not applied without an alert or after the budget.
+- **Onset check (removed in patch 52):** when the agent named a service other than the paging one, the
+  answer was refused once with a request to check that service's timeseries against the onset.
 - Everything the model is told (briefings, the onset check, triage window and baselines) now lives in
   `prompts.py` and is part of `PROMPT_VERSION`; before, the briefing and triage window were outside the
   freeze check. Prompts `8fd0c4cf47f9`.
+
+**Hosted check of patch 51** (same model, 1 run per cell):
+
+| | agent-only | end-to-end | confidently wrong (both) |
+|---|---|---|---|
+| agent, before 51 | 8/10 | 5/10 | 6 |
+| agent, with 51 | 7/10 | 4/10 | 4 |
+| baseline, with 51 | 7/10 | 7/10 | 3 |
+
+- No end-to-end answer named the previous scenario any more, but the agent turned cautious: 4 unsure
+  end-to-end (3 of them right before 51). Fewer confident errors, fewer right answers. Mean input tokens
+  per end-to-end run rose from 45k to 68k.
+- The onset check fired twice: productCatalogFailure, right (product-catalog) withdrawn to unsure;
+  productCatalogLockContention, wrong (ad) swapped for wrong (frontend). It fixed nothing.
+- One run of 10 scenarios: a one-scenario change is noise. The check's record is not.
+
+**Patch 52 and the stopping rule.** Three rounds on the same 10 scenarios have not lifted the agent above
+"repeat the alert" end-to-end; more rounds would fit capture 2's quirks rather than the agent. Patch 52
+removes only the onset check (the component with a record of harm and no benefit) and keeps the 5-minute
+paged comparison and the briefing rule. Decided before running it: one hosted check of patch 52 on
+capture 2, then freeze those prompts **whatever they score**, then capture B. Prompts `40abe73ebe28`.

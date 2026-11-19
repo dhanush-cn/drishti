@@ -139,5 +139,4 @@ class RunResult(BaseModel):
     usage: Usage = Field(default_factory=Usage)
     seconds: float = 0.0
     error: Optional[str] = None      # provider or harness failure (scored wrong, reported)
-    onset_check: Optional[str] = None  # end-to-end: the service first named, when it was not the paging one and the agent was asked to check its onset
     transcript: list[dict] = Field(default_factory=list)

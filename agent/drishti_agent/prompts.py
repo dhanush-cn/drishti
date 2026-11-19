@@ -84,13 +84,9 @@ BRIEFING_PAGED = ("You were paged at {until} by the detector's alert: service {s
                   "A service that was already degraded before then is an earlier incident: put it in ruled_out, do not name it.")
 BRIEFING_UNPAGED = "An incident was reported at {until}; no single alert identifies it."
 
-# Asked once, when the agent names a service other than the paging one (capture 2, Gemini:
-# all 4 wrong end-to-end answers named the previous scenario's fault, at confidence 0.8-0.95).
-ONSET_CHECK = ("Before this is accepted: you named {named}, but the page is on {service}, opened at {opened_at}. "
-               "Did {named}'s own signals change at or after {opened_at}? Check with timeseries for {named} "
-               "(window 15m, step 30s). If {named} was already degraded before {opened_at}, that is an earlier "
-               "incident: name the service that changed at {opened_at} instead. Then call submit_diagnosis again; "
-               "the same answer is fine if {named} did change then.")
+# Patch 51 also asked the agent, once, to check the onset of a service it named other than the
+# paging one. On capture 2 (Gemini 3.5 Flash-Lite) it fired twice: one right answer withdrawn to
+# unsure, one wrong answer swapped for another, none fixed. Removed in patch 52.
 
 PROMPT_VERSION = hashlib.sha256("\x00".join([AGENT_SYSTEM, BASELINE_SYSTEM, repr(SUBMIT_TOOL), TRIAGE_WINDOW, TRIAGE_BASELINE,
-                                              TRIAGE_BASELINE_PAGED, BRIEFING_PAGED, BRIEFING_UNPAGED, ONSET_CHECK]).encode()).hexdigest()[:12]
+                                              TRIAGE_BASELINE_PAGED, BRIEFING_PAGED, BRIEFING_UNPAGED]).encode()).hexdigest()[:12]

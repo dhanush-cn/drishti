@@ -186,27 +186,10 @@ class Onset(unittest.TestCase):
         agent.investigate(FakeAPI(), llm, budget=3, alert=self.ALERT)
         self.assertIn("already degraded before then is an earlier incident", llm.sent[0][1][0]["content"])
 
-    def test_naming_another_service_is_checked_once(self):
-        llm = Scripted([submit(root_cause_service="cart"), submit(root_cause_service="cart")])
-        r = agent.investigate(FakeAPI(), llm, budget=5, alert=self.ALERT)
-        self.assertEqual(r.llm_calls, 2, "one check, then the same answer stands")
-        self.assertEqual((r.diagnosis.root_cause_service, r.onset_check), ("cart", "cart"))
-        self.assertIn("Did cart's own signals change at or after 2026-11-03T17:07:20Z", llm.sent[1][1][-1]["content"])
-
-    def test_the_check_can_change_the_answer(self):
-        r = agent.investigate(FakeAPI(), Scripted([submit(root_cause_service="cart"), submit()]), budget=5, alert=self.ALERT)
-        self.assertEqual((r.diagnosis.root_cause_service, r.onset_check), ("payment", "cart"))
-
-    def test_naming_the_paging_service_is_not_checked(self):
-        r = agent.investigate(FakeAPI(), Scripted([submit()]), budget=5, alert=self.ALERT)
-        self.assertEqual((r.llm_calls, r.onset_check), (1, None))
-
-    def test_no_check_without_an_alert_or_after_the_budget(self):
-        r = agent.investigate(FakeAPI(), Scripted([submit(root_cause_service="cart")]), budget=5)
-        self.assertEqual((r.llm_calls, r.onset_check), (1, None))
-        llm = Scripted([Reply("", [ToolCall("c1", "spans", {"service": "cart"})]), submit(root_cause_service="cart")])
-        r = agent.investigate(FakeAPI(), llm, budget=1, alert=self.ALERT)
-        self.assertEqual((r.diagnosis.root_cause_service, r.onset_check), ("cart", None), "out of budget: accepted as is")
+    def test_naming_another_service_is_accepted_as_is(self):
+        # Patch 52 removed the onset check: an answer is never refused for naming a non-paging service.
+        r = agent.investigate(FakeAPI(), Scripted([submit(root_cause_service="cart")]), budget=5, alert=self.ALERT)
+        self.assertEqual((r.llm_calls, r.diagnosis.root_cause_service), (1, "cart"))
 
 
 class PromptVersion(unittest.TestCase):
@@ -214,7 +197,7 @@ class PromptVersion(unittest.TestCase):
         import hashlib
         from drishti_agent import prompts as P
         parts = [P.AGENT_SYSTEM, P.BASELINE_SYSTEM, repr(P.SUBMIT_TOOL), P.TRIAGE_WINDOW, P.TRIAGE_BASELINE,
-                 P.TRIAGE_BASELINE_PAGED, P.BRIEFING_PAGED, P.BRIEFING_UNPAGED, P.ONSET_CHECK]
+                 P.TRIAGE_BASELINE_PAGED, P.BRIEFING_PAGED, P.BRIEFING_UNPAGED]
         self.assertEqual(P.PROMPT_VERSION, hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:12])
 
 

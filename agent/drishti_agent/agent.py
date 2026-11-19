@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from .api import TOOLS, QueryAPI, call_tool, compact
 from .llm import LLMError
 from .models import Diagnosis, RunResult, ToolRecord
-from .prompts import (AGENT_SYSTEM, BRIEFING_PAGED, BRIEFING_UNPAGED, ONSET_CHECK, SUBMIT_TOOL, TRIAGE_BASELINE,
+from .prompts import (AGENT_SYSTEM, BRIEFING_PAGED, BRIEFING_UNPAGED, SUBMIT_TOOL, TRIAGE_BASELINE,
                       TRIAGE_BASELINE_PAGED, TRIAGE_WINDOW)
 
 DEFAULT_BUDGET = 12          # tool calls (not counting submit_diagnosis)
@@ -86,7 +86,6 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: dict | 
                          f"You have {budget} tool calls. Investigate, then call submit_diagnosis."}]
     used = 0
     nudges = 0
-    checked = False
     try:
         for _turn in range(MAX_TURNS):
             out_of_budget = used >= budget
@@ -110,13 +109,6 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: dict | 
                 submit = None
             if submit is not None:
                 d = parse_diagnosis(submit.arguments)
-                if (d and alert and not checked and not out_of_budget and d.root_cause_service
-                        and d.root_cause_service != alert["service"]):
-                    checked = True
-                    res.onset_check = d.root_cause_service
-                    msgs.append({"role": "tool", "tool_call_id": submit.id, "name": submit.name, "content":
-                                 ONSET_CHECK.format(named=d.root_cause_service, service=alert["service"], opened_at=alert["opened_at"])})
-                    continue
                 res.diagnosis, res.valid_answer = (d, True) if d else (Diagnosis.unsure("invalid submit_diagnosis arguments"), False)
                 res.budget_exhausted = out_of_budget
                 break
