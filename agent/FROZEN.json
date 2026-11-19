@@ -1,0 +1,10 @@
+{
+ "prompt_version": "40abe73ebe28",
+ "git_commit": "24f3158",
+ "tuned_on": "capture-2",
+ "hosted_check": {
+  "model": "openai-compat:gemini-3.5-flash-lite",
+  "dir": "/mnt/c/Users/Dhanush/Downloads/drishti-week5/results/capture-2/hosted"
+ },
+ "frozen_at": "2026-11-19T09:13:13Z"
+}
