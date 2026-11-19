@@ -124,8 +124,16 @@ an on-call engineer asks first, in a bounded, typed response:
   that name a flag are replaced with `[masked: …]`. Span rows of the flag system itself (clients'
   `flagd.evaluation…` calls, the proxy's `flagd-ui` route) are dropped, because their rate moves when a
   flag changes. **`scripts/leakcheck.py` found that one:** it calls every endpoint for every service, as of
-  3 min into each scenario, and searches every response for a flag name, a masked phrase or a hidden
-  service. Capture 2: 13 scenarios, 754 responses, 29,926 masked lines reported, **0 leaks** after the fix.
+  3 min into each scenario, and searches every response for a flag name, a masked phrase, the flag
+  system or the load generator anywhere, and for a hidden service listed or owning data. Capture 2:
+  13 scenarios, 754 responses, 29,926 masked lines reported, **0 leaks** after the fix.
+- **A service naming the collector is not a leak (patch 54).** Capture B's first leak check failed on
+  recommendation's own log "Failed to export traces to otel-collector:4317 … DEADLINE_EXCEEDED" under
+  recommendationCacheFailure. The collector is hidden as a service (its telemetry isn't the system under
+  diagnosis), but that line names no flag and says nothing about what was injected: it is recommendation
+  struggling, which an on-call engineer would see. The query API is unchanged; leakcheck now counts the
+  observability stack's names only as a service. Decided before any capture B score existed. Capture 2
+  under the new rule: still 754 responses, 0 leaks.
 - **Cost of masking, stated:** adManualGc's and adHighCpu's only log lines are masked. The agent must find
   them from latency and CPU, which is how a real incident without a confession in the logs looks.
 

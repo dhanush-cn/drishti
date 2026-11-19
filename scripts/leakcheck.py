@@ -4,7 +4,15 @@
 For every scenario in a recording's timeline, as of a few minutes after its
 flag went on, calls every endpoint for every service the API lists and
 searches each response for anything that would hand the agent the answer:
-a flag name, the flag system's words, or a hidden service. Exit 1 on any hit.
+a flag name, the flag system's words, or the load generator, anywhere in the
+text; and a hidden service as a service (listed, or owning data). Exit 1 on any hit.
+
+The observability stack (the collector, Drishti's containers) is hidden as a
+service: its own telemetry is not the system under diagnosis (design E7). A
+service's log that merely names it is that service's own evidence and reveals
+nothing about the fault (capture B: recommendation "Failed to export traces to
+otel-collector:4317 ... DEADLINE_EXCEEDED" under recommendationCacheFailure), so
+such a mention is not a leak. Decided before any capture B score existed.
 
     scripts/leakcheck.py --api http://localhost:8091 --timeline timeline.jsonl
 """
@@ -16,8 +24,28 @@ FLAGS = ["adFailure", "adHighCpu", "adManualGc", "cartFailure", "emailMemoryLeak
          "loadGeneratorFloodHomepage", "paymentFailure", "paymentUnreachable", "productCatalogFailure",
          "productCatalogLockContention", "recommendationCacheFailure"]
 PHRASES = ["feature flag", "featureflag", "feature_flag", "problempattern", "flagd", "flagservice"]
-HIDDEN = ["flagd-ui", "load-generator", "otel-collector", "otelcol-contrib", "drishti-"]
-NEEDLES = [f.lower() for f in FLAGS] + PHRASES + HIDDEN
+# Anywhere in a response: these describe the fault injection or the test traffic.
+HIDDEN_TEXT = ["flagd-ui", "load-generator"]
+# Only as a service: the observability stack.
+HIDDEN_OWNERS = ["otel-collector", "otelcol-contrib", "drishti-"]
+NEEDLES = [f.lower() for f in FLAGS] + PHRASES + HIDDEN_TEXT
+OWNER = re.compile(r'"service"\s*:\s*"(?:container:|host:)?(' + "|".join(re.escape(h) for h in HIDDEN_OWNERS) + r')')
+
+
+def leak(body: str):
+    """The first leak in a response body, as (needle, index), or None."""
+    low = body.lower()
+    for n in NEEDLES:
+        if n in low:
+            return n, low.index(n)
+    m = OWNER.search(low)
+    if m:
+        return m.group(1), m.start()
+    return None
+
+
+def hidden_listed(services):
+    return [s for s in services if any(h in s.lower() for h in HIDDEN_OWNERS + HIDDEN_TEXT + ["flagd"])]
 
 
 def get(api, path, **params):
@@ -41,6 +69,8 @@ def main():
         on = datetime.fromisoformat(sc["on"]["set_at"].replace("Z", "+00:00"))
         until = (on + timedelta(minutes=a.after)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         services = json.loads(get(a.api, "/v1/services", until=until))["data"]["services"]
+        for s in hidden_listed(services):
+            hits.append(f"{sc['flag']} services: hidden service {s!r} listed")
         bodies = [("overview", get(a.api, "/v1/overview", until=until, window="5m")),
                   ("anomalies", get(a.api, "/v1/anomalies", until=until, window="15m"))]
         for s in services:
@@ -58,11 +88,10 @@ def main():
             if '"error"' in low[:20]:
                 hits.append(f"{sc['flag']} {name}: error response {b[:200]}")
                 continue
-            for n in NEEDLES:
-                if n in low:
-                    i = low.index(n)
-                    hits.append(f"{sc['flag']} {name}: {n!r} in …{b[max(0, i-80):i+80]}…")
-                    break
+            found = leak(b)
+            if found:
+                n, i = found
+                hits.append(f"{sc['flag']} {name}: {n!r} in …{b[max(0, i-80):i+80]}…")
     print(f"{len(scenarios)} scenarios, {calls} responses, masked lines reported: {masked}, leaks: {len(hits)}")
     for h in hits[:40]:
         print("  LEAK", h)
