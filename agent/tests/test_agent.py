@@ -161,6 +161,63 @@ class Briefing(unittest.TestCase):
         self.assertEqual(api.calls[0][1]["window"], "2m")
 
 
+class Onset(unittest.TestCase):
+    """End-to-end runs explain the page: what changed at its onset (patch 51)."""
+    ALERT = {"service": "payment", "rule": "log_error_spike", "opened_at": "2026-11-03T17:07:20Z", "series": {}}
+
+    def test_paged_triage_compares_with_the_5_minutes_before(self):
+        api = FakeAPI()
+        agent.investigate(api, Scripted([submit()]), budget=3, alert=self.ALERT)
+        self.assertEqual(api.calls[0][1]["baseline"], "5m")
+        b = FakeAPI()
+        baseline.diagnose(b, Scripted([Reply('{"root_cause_service": null}')]), alert=self.ALERT)
+        self.assertEqual({p["baseline"] for path, p in b.calls if "baseline" in p}, {"5m"}, "the baseline system sees the same comparison")
+
+    def test_unpaged_triage_keeps_the_30_minutes_before(self):
+        api = FakeAPI()
+        agent.investigate(api, Scripted([submit()]), budget=3)
+        self.assertEqual(api.calls[0][1]["baseline"], "30m")
+        b = FakeAPI()
+        baseline.diagnose(b, Scripted([Reply('{"root_cause_service": null}')]))
+        self.assertEqual({p["baseline"] for path, p in b.calls if "baseline" in p}, {"30m"})
+
+    def test_briefing_states_the_onset_rule(self):
+        llm = Scripted([submit()])
+        agent.investigate(FakeAPI(), llm, budget=3, alert=self.ALERT)
+        self.assertIn("already degraded before then is an earlier incident", llm.sent[0][1][0]["content"])
+
+    def test_naming_another_service_is_checked_once(self):
+        llm = Scripted([submit(root_cause_service="cart"), submit(root_cause_service="cart")])
+        r = agent.investigate(FakeAPI(), llm, budget=5, alert=self.ALERT)
+        self.assertEqual(r.llm_calls, 2, "one check, then the same answer stands")
+        self.assertEqual((r.diagnosis.root_cause_service, r.onset_check), ("cart", "cart"))
+        self.assertIn("Did cart's own signals change at or after 2026-11-03T17:07:20Z", llm.sent[1][1][-1]["content"])
+
+    def test_the_check_can_change_the_answer(self):
+        r = agent.investigate(FakeAPI(), Scripted([submit(root_cause_service="cart"), submit()]), budget=5, alert=self.ALERT)
+        self.assertEqual((r.diagnosis.root_cause_service, r.onset_check), ("payment", "cart"))
+
+    def test_naming_the_paging_service_is_not_checked(self):
+        r = agent.investigate(FakeAPI(), Scripted([submit()]), budget=5, alert=self.ALERT)
+        self.assertEqual((r.llm_calls, r.onset_check), (1, None))
+
+    def test_no_check_without_an_alert_or_after_the_budget(self):
+        r = agent.investigate(FakeAPI(), Scripted([submit(root_cause_service="cart")]), budget=5)
+        self.assertEqual((r.llm_calls, r.onset_check), (1, None))
+        llm = Scripted([Reply("", [ToolCall("c1", "spans", {"service": "cart"})]), submit(root_cause_service="cart")])
+        r = agent.investigate(FakeAPI(), llm, budget=1, alert=self.ALERT)
+        self.assertEqual((r.diagnosis.root_cause_service, r.onset_check), ("cart", None), "out of budget: accepted as is")
+
+
+class PromptVersion(unittest.TestCase):
+    def test_everything_the_model_is_told_is_in_the_hash(self):
+        import hashlib
+        from drishti_agent import prompts as P
+        parts = [P.AGENT_SYSTEM, P.BASELINE_SYSTEM, repr(P.SUBMIT_TOOL), P.TRIAGE_WINDOW, P.TRIAGE_BASELINE,
+                 P.TRIAGE_BASELINE_PAGED, P.BRIEFING_PAGED, P.BRIEFING_UNPAGED, P.ONSET_CHECK]
+        self.assertEqual(P.PROMPT_VERSION, hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:12])
+
+
 class Stall(unittest.TestCase):
     def test_talking_without_acting_stops_after_two_reminders(self):
         llm = Scripted([Reply("let me think"), Reply("still thinking"), Reply("hmm"), submit()])
@@ -344,7 +401,7 @@ class Hosted(unittest.TestCase):
                 code = statuses.pop(0) if statuses else 200
                 out = json.dumps(Hosted.SIGNED if code == 200 else {"error": "quota"}).encode()
                 self.send_response(code)
-                if code == 429:
+                if code in (429, 503):
                     self.send_header("Retry-After", "0")
                 self.send_header("Content-Length", str(len(out)))
                 self.end_headers()
@@ -387,6 +444,11 @@ class Hosted(unittest.TestCase):
         r = OpenAICompat("gemini", url, rate_limit_retries=5).chat("s", [{"role": "user", "content": "x"}])
         self.assertEqual(len(seen), 4)
         self.assertEqual(r.tool_calls[0].name, "spans")
+
+    def test_overloaded_503_is_waited_out_like_a_rate_limit(self):
+        url, seen = self.stub([503, 503, 503])
+        r = OpenAICompat("gemini", url, rate_limit_retries=5).chat("s", [{"role": "user", "content": "x"}])
+        self.assertEqual((len(seen), r.tool_calls[0].name), (4, "spans"))
 
     def test_rate_limit_retries_are_bounded(self):
         url, seen = self.stub([429] * 10)

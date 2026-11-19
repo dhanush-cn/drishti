@@ -68,4 +68,29 @@ SUBMIT_TOOL = {
     },
 }
 
-PROMPT_VERSION = hashlib.sha256((AGENT_SYSTEM + BASELINE_SYSTEM + repr(SUBMIT_TOOL)).encode()).hexdigest()[:12]
+# How an investigation starts, and the triage settings. Everything the model is told
+# lives here so that PROMPT_VERSION changes when any of it does (before patch 51 the
+# briefing and the triage window were in agent.py, outside the freeze check).
+TRIAGE_WINDOW = "2m"   # "now" in the first look; 5m carried the previous incident into end-to-end runs (capture 2)
+# Agent-only (no alert): compare with the 30 minutes before; the 5 before would hold the
+# fault itself. End-to-end: compare with the 5 minutes just before the page, so an
+# incident already running then shows as flat or falling, and what began at the page
+# as rising (capture 2: the previous scenario's residue topped the 30-minute overview).
+TRIAGE_BASELINE = "30m"
+TRIAGE_BASELINE_PAGED = "5m"
+
+BRIEFING_PAGED = ("You were paged at {until} by the detector's alert: service {service}, rule {rule}{series}, opened at {opened_at}. "
+                  "Explain this page: the root cause is a service whose own signals changed at or after {opened_at}. "
+                  "A service that was already degraded before then is an earlier incident: put it in ruled_out, do not name it.")
+BRIEFING_UNPAGED = "An incident was reported at {until}; no single alert identifies it."
+
+# Asked once, when the agent names a service other than the paging one (capture 2, Gemini:
+# all 4 wrong end-to-end answers named the previous scenario's fault, at confidence 0.8-0.95).
+ONSET_CHECK = ("Before this is accepted: you named {named}, but the page is on {service}, opened at {opened_at}. "
+               "Did {named}'s own signals change at or after {opened_at}? Check with timeseries for {named} "
+               "(window 15m, step 30s). If {named} was already degraded before {opened_at}, that is an earlier "
+               "incident: name the service that changed at {opened_at} instead. Then call submit_diagnosis again; "
+               "the same answer is fine if {named} did change then.")
+
+PROMPT_VERSION = hashlib.sha256("\x00".join([AGENT_SYSTEM, BASELINE_SYSTEM, repr(SUBMIT_TOOL), TRIAGE_WINDOW, TRIAGE_BASELINE,
+                                              TRIAGE_BASELINE_PAGED, BRIEFING_PAGED, BRIEFING_UNPAGED, ONSET_CHECK]).encode()).hexdigest()[:12]

@@ -57,8 +57,9 @@ class LLMError(Exception):
 
 
 def _post(url: str, headers: dict, body: dict, timeout: float, retries: int = 2, rate_limit_retries: int = 2) -> dict:
-    """Provider errors are retried `retries` times; 429 (rate limit) up to
-    `rate_limit_retries` times, waiting Retry-After or 15 s, 30 s, 60 s..."""
+    """Provider errors are retried `retries` times; 429 (rate limit) and 503
+    (overloaded) up to `rate_limit_retries` times, waiting Retry-After or 15 s,
+    30 s, 60 s..."""
     data = json.dumps(body).encode()
     last = None
     attempt = limited = 0
@@ -70,12 +71,13 @@ def _post(url: str, headers: dict, body: dict, timeout: float, retries: int = 2,
         except urllib.error.HTTPError as e:
             msg = e.read().decode(errors="replace")[:500]
             last = LLMError(f"HTTP {e.code}: {msg}")
-            if e.code == 429 and limited < rate_limit_retries:
+            # 429 (quota) and 503 (Gemini "high demand"; capture 2 lost a run to three in a row) are waits, not faults.
+            if e.code in (429, 503) and limited < rate_limit_retries:
                 ra = e.headers.get("Retry-After", "")
                 time.sleep(float(ra) if ra.replace(".", "", 1).isdigit() else min(15 * 2 ** limited, 120))
                 limited += 1
                 continue
-            if e.code not in (408, 409, 500, 502, 503, 504, 529):
+            if e.code not in (408, 409, 500, 502, 503, 504, 529):  # 503 lands here once its waits are used up
                 raise last from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last = LLMError(f"request failed: {e}")

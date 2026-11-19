@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import time
 
-from .agent import TRIAGE_WINDOW, briefing, parse_diagnosis
+from .agent import briefing, parse_diagnosis, triage_baseline
+from .prompts import TRIAGE_WINDOW
 from .api import QueryAPI, call_tool
 from .llm import LLMError
 from .models import Diagnosis, RunResult
@@ -18,10 +19,12 @@ from .prompts import BASELINE_SYSTEM
 DUMP_CHARS = 48_000  # ~12k tokens
 
 
-def dump(api: QueryAPI, limit: int = DUMP_CHARS) -> str:
+def dump(api: QueryAPI, limit: int = DUMP_CHARS, alert: dict | None = None) -> str:
+    """Same comparison as the agent's triage: the 5 minutes before a page, else the 30 before."""
     parts = []
-    _, text, _ = call_tool(api, "overview", {"window": TRIAGE_WINDOW, "baseline": "30m"})
-    parts.append(f"## overview (window {TRIAGE_WINDOW} vs the 30m before)\n{text}")
+    base = triage_baseline(alert)
+    _, text, _ = call_tool(api, "overview", {"window": TRIAGE_WINDOW, "baseline": base})
+    parts.append(f"## overview (window {TRIAGE_WINDOW} vs the {base} before)\n{text}")
     _, text, _ = call_tool(api, "anomalies", {"window": "15m"})
     parts.append(f"## detector alerts (last 15m)\n{text}")
     ok, text, _ = call_tool(api, "list_services", {})
@@ -31,7 +34,7 @@ def dump(api: QueryAPI, limit: int = DUMP_CHARS) -> str:
     except Exception:
         services = []
     for s in services:
-        _, text, _ = call_tool(api, "log_templates", {"service": s, "window": TRIAGE_WINDOW, "baseline": "30m"})
+        _, text, _ = call_tool(api, "log_templates", {"service": s, "window": TRIAGE_WINDOW, "baseline": base})
         parts.append(f"## log templates: {s}\n{text[:2500]}")
     out = "\n\n".join(parts)
     return out[:limit]
@@ -40,7 +43,7 @@ def dump(api: QueryAPI, limit: int = DUMP_CHARS) -> str:
 def diagnose(api: QueryAPI, llm, alert: dict | None = None) -> RunResult:
     start = time.monotonic()
     res = RunResult(system="baseline", diagnosis=Diagnosis.unsure("no answer"), valid_answer=False)
-    snapshot = dump(api)
+    snapshot = dump(api, alert=alert)
     msgs = [{"role": "user", "content": f"{briefing(api, alert)}\n\nTelemetry snapshot at that moment:\n\n{snapshot}\n\nAnswer with the JSON object."}]
     try:
         reply = llm.chat(BASELINE_SYSTEM, msgs, None)

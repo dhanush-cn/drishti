@@ -155,9 +155,11 @@ recordings. They decide what the agent looks at first, not what it concludes.
 `agent/` (Python, one dependency: Pydantic; HTTP is the standard library).
 
 **Agent v0 (`agent.py`): a plain tool-calling loop.** Week 6 turns it into a LangGraph hypothesis graph.
-1. **Triage first, no LLM:** the harness calls `overview` (2 m vs the 30 m before; 5 m in v1, see §5) and
+1. **Triage first, no LLM:** the harness calls `overview` (the last 2 m vs the 30 m before, or vs the 5 m
+   before when paged; see §5) and
    `anomalies` itself and puts both in the first message, after a one-line briefing: the alert that paged
-   it (end-to-end) or "no single alert identifies it" (agent-only).
+   it (end-to-end) or "no single alert identifies it" (agent-only). A paged briefing also states the rule:
+   the root cause changed at or after the alert's onset; an earlier incident goes in ruled_out.
 2. **Loop:** the model calls tools (the seven query API endpoints) and gets compact results back.
    - The overview goes back as text: changed services and their changes first, then one line per service.
      JSON for ~25 services is longer than the 6,000-character result cap, and the cut-off was found by
@@ -193,6 +195,7 @@ changed service", and it runs the whole harness without a model. The alert half 
     signatures to their turns and expect them on the next request; a rebuilt message would drop them.
   - Free tiers limit requests per minute and per day. `--rpm N` spaces calls to N per minute, and a 429
     is waited out (Retry-After, else 15 s doubling to 2 min, 5 times) before the run is recorded failed.
+    A 503 ("high demand") is waited out the same way (patch 51).
   - Thinking can't be turned off on Gemini 3; `--reasoning-effort low` keeps it small, and
     `--max-tokens` leaves room for it.
   - `python -m drishti_agent.evals.hostcheck` runs one two-turn tool call first, so a wrong key,
@@ -301,3 +304,35 @@ What it showed:
   (v1: 49 min).
 
 Read with care: 10 scenarios, one recording, a 7B model. These are tuning numbers, not results.
+
+**Hosted check** (Gemini 3.5 Flash-Lite, free tier, prompts `57bbd9adf6b6`, code = patches 40–50, 1 run per cell):
+
+| | agent-only | end-to-end |
+|---|---|---|
+| agent | **8/10** (confidently wrong 2) | 5/10 (confidently wrong 4, 1 provider error) |
+| baseline | 7/10 | 7/10 |
+| floor (top changed / repeat the alert) | 4/10 | 7/10 |
+
+- With a stronger model the loop works agent-only: above the baseline and twice the floor. Much of the
+  Qwen 7B gap was the model.
+- End-to-end, all 4 wrong answers named **the previous scenario's fault**: paymentFailure → cart
+  (cartFailure), adHighCpu → payment (paymentUnreachable), productCatalogLockContention → ad
+  (adManualGc), recommendationCacheFailure → a traffic surge (loadGeneratorFloodHomepage), at
+  confidence 0.8–0.95. At the first alert the new fault is seconds old; the agent widened its windows to
+  10–15 minutes and explained the older, louder incident. The 5th miss was three 503s from Gemini.
+
+**Patch 51: explain the page, not the loudest incident.**
+- Paged triage compares the last 2 minutes with the **5 minutes just before** (agent-only keeps 30: the
+  5 before would hold the fault). An incident already running shows as flat or falling. Measured with the
+  floor's ranker at the end-to-end trigger: top changed service right 1/10 with 30 m, 2/10 with 5 m; the
+  residue left the top for paymentFailure (cart) and productCatalogLockContention (ad). It helps, it does
+  not decide, hence the next two.
+- The paged briefing states the rule: the root cause changed at or after the onset; an earlier incident
+  goes in ruled_out. Same text for agent and baseline.
+- **Onset check:** when the agent names a service other than the paging one, the answer is refused once
+  with a request to check that service's timeseries against the onset; the next answer stands, the same
+  one included. Recorded per run as `onset_check` (the first-named service), so a check that turns a right
+  answer wrong is visible. Not applied without an alert or after the budget.
+- Everything the model is told (briefings, the onset check, triage window and baselines) now lives in
+  `prompts.py` and is part of `PROMPT_VERSION`; before, the briefing and triage window were outside the
+  freeze check. Prompts `8fd0c4cf47f9`.

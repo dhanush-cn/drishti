@@ -26,29 +26,32 @@ from pydantic import ValidationError
 from .api import TOOLS, QueryAPI, call_tool, compact
 from .llm import LLMError
 from .models import Diagnosis, RunResult, ToolRecord
-from .prompts import AGENT_SYSTEM, SUBMIT_TOOL
+from .prompts import (AGENT_SYSTEM, BRIEFING_PAGED, BRIEFING_UNPAGED, ONSET_CHECK, SUBMIT_TOOL, TRIAGE_BASELINE,
+                      TRIAGE_BASELINE_PAGED, TRIAGE_WINDOW)
 
 DEFAULT_BUDGET = 12          # tool calls (not counting submit_diagnosis)
 MAX_TURNS = 16               # model turns, a hard stop
 MAX_NUDGES = 2               # turns that neither call a tool nor answer, before the run stops as unsure
 
 
-TRIAGE_WINDOW = "2m"   # "now" in the first look; 5m carried the previous incident into end-to-end runs (capture 2)
-
 
 def briefing(api: QueryAPI, alert: dict | None) -> str:
     """How the investigation started, as an on-call engineer would be told."""
     if alert:
         series = ", ".join(f"{k}={v}" for k, v in (alert.get("series") or {}).items())
-        return (f"You were paged at {api.until} by the detector's alert: service {alert['service']}, rule {alert['rule']}"
-                f"{' (' + series + ')' if series else ''}, opened at {alert['opened_at']}.")
-    return f"An incident was reported at {api.until}; no single alert identifies it."
+        return BRIEFING_PAGED.format(until=api.until, service=alert["service"], rule=alert["rule"],
+                                     series=f" ({series})" if series else "", opened_at=alert["opened_at"])
+    return BRIEFING_UNPAGED.format(until=api.until)
 
 
-def triage(api: QueryAPI) -> str:
+def triage_baseline(alert: dict | None) -> str:
+    return TRIAGE_BASELINE_PAGED if alert else TRIAGE_BASELINE
+
+
+def triage(api: QueryAPI, alert: dict | None = None) -> str:
     """The deterministic first look, written into the first user message."""
     parts = []
-    for name, args in (("overview", {"window": TRIAGE_WINDOW, "baseline": "30m"}), ("anomalies", {"window": "15m"})):
+    for name, args in (("overview", {"window": TRIAGE_WINDOW, "baseline": triage_baseline(alert)}), ("anomalies", {"window": "15m"})):
         ok, text, _ = call_tool(api, name, args)
         parts.append(f"## {name} {json.dumps(args)}\n{text}")
     return "\n\n".join(parts)
@@ -79,10 +82,11 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: dict | 
     res = RunResult(system="agent", diagnosis=Diagnosis.unsure("no answer"), valid_answer=False)
     tools = TOOLS + [SUBMIT_TOOL]
     msgs: list[dict] = [{"role": "user", "content":
-                         f"{briefing(api, alert)}\n\nTriage at that moment:\n\n{triage(api)}\n\n"
+                         f"{briefing(api, alert)}\n\nTriage at that moment:\n\n{triage(api, alert)}\n\n"
                          f"You have {budget} tool calls. Investigate, then call submit_diagnosis."}]
     used = 0
     nudges = 0
+    checked = False
     try:
         for _turn in range(MAX_TURNS):
             out_of_budget = used >= budget
@@ -106,6 +110,13 @@ def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: dict | 
                 submit = None
             if submit is not None:
                 d = parse_diagnosis(submit.arguments)
+                if (d and alert and not checked and not out_of_budget and d.root_cause_service
+                        and d.root_cause_service != alert["service"]):
+                    checked = True
+                    res.onset_check = d.root_cause_service
+                    msgs.append({"role": "tool", "tool_call_id": submit.id, "name": submit.name, "content":
+                                 ONSET_CHECK.format(named=d.root_cause_service, service=alert["service"], opened_at=alert["opened_at"])})
+                    continue
                 res.diagnosis, res.valid_answer = (d, True) if d else (Diagnosis.unsure("invalid submit_diagnosis arguments"), False)
                 res.budget_exhausted = out_of_budget
                 break
