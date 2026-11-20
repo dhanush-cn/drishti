@@ -7,7 +7,6 @@ import unittest
 import uuid
 
 from drishti_agent import durable, service
-from drishti_agent.memory import Memory
 
 from test_durable import ByContent
 from test_graph import API
@@ -82,11 +81,12 @@ class Service(unittest.TestCase):
                          ("dhanush", ["productCatalogFailure"], True))
         after = self.sse(id, after=len(evs) - 1)
         self.assertIn("recovery", [t for t, _ in after])
-        hits = Memory(PG, source="live").similar(json.loads(json.dumps(
-            __import__("drishti_agent.memory", fromlist=["signature"]).signature(
-                __import__("drishti_agent.pagecheck", fromlist=["page_check"]).page_check(AlertAPI(graph_series()), ALERT, cap=8).to_json(), ALERT))))
-        mine = [h for h in hits if h["id"] == id]
-        self.assertTrue(mine and mine[0]["outcome"] == "confirmed", hits)
+        # This run's incident, by its id: similar() returns the top 2, and a Postgres that keeps earlier test runs holds
+        # other incidents with the same signature (the first version of this check failed on a second run).
+        import psycopg
+        with psycopg.connect(PG) as conn:
+            row = conn.execute("SELECT outcome, root_cause, outcome_by FROM incidents WHERE id = %s", (id,)).fetchone()
+        self.assertEqual(row, ("confirmed", "product-catalog", "recovery verified"))
 
     def test_rejected_and_not_waiting(self):
         id = self.c.post("/v1/investigations", json={"anomaly_id": AlertAPI.aid}).json()["id"]
