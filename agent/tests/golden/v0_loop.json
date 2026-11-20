@@ -1,0 +1,2660 @@
+{
+ "batched_submit_refused": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/spans",
+    {
+     "service": "payment",
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.8,
+   "evidence": [
+    "payment Charge error ratio 0.67"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "payment",
+    "checkout"
+   ],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": "payment fails charges"
+  },
+  "error": null,
+  "llm_calls": 2,
+  "sent": [
+   "7de7784ae77b84c8",
+   "7b9bdd277376782a"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {
+     "service": "payment"
+    },
+    "chars": 123,
+    "ms": 0,
+    "name": "spans",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "service": "payment"
+      },
+      "id": "c1",
+      "name": "spans"
+     },
+     {
+      "arguments": {
+       "confidence": 0.9,
+       "root_cause_service": "x"
+      },
+      "id": "s0",
+      "name": "submit_diagnosis"
+     }
+    ]
+   },
+   {
+    "content": "not accepted: submitted in the same turn as tool calls whose results you had not seen. Read the results below, then call submit_diagnosis on its own.",
+    "name": "submit_diagnosis",
+    "role": "tool",
+    "tool_call_id": "s0"
+   },
+   {
+    "content": "{\"masked_lines\":3,\"window\":\"10m0s\",\"data\":{\"path\":\"/v1/spans\",\"args\":{\"service\":\"payment\",\"until\":\"2026-11-03T17:11:07Z\"}}}",
+    "name": "spans",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.8,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 100,
+   "output_tokens": 20
+  },
+  "valid_answer": true
+ },
+ "budget_overrun_in_one_turn": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": true,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "tool budget exhausted without a diagnosis"
+  },
+  "error": null,
+  "llm_calls": 3,
+  "sent": [
+   "ace377f8a9959b24",
+   "207d131dba09267c",
+   "f56af6d797c837ee"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 4 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c0",
+      "name": "overview"
+     },
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     },
+     {
+      "arguments": {},
+      "id": "c2",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c0"
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c2"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c3",
+      "name": "overview"
+     },
+     {
+      "arguments": {},
+      "id": "c4",
+      "name": "overview"
+     },
+     {
+      "arguments": {},
+      "id": "c5",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c3"
+   },
+   {
+    "content": "error: tool budget exhausted; call submit_diagnosis now",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c4"
+   },
+   {
+    "content": "error: tool budget exhausted; call submit_diagnosis now",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c5"
+   },
+   {
+    "content": "Tool budget exhausted. Submit your diagnosis now with submit_diagnosis (as JSON if you cannot call it). If the evidence does not single out a service, answer root_cause_service null and list what you ruled out.",
+    "role": "user"
+   },
+   {
+    "content": "probably payment",
+    "role": "assistant",
+    "tool_calls": []
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": false
+ },
+ "budget_then_silence": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": true,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "tool budget exhausted without a diagnosis"
+  },
+  "error": null,
+  "llm_calls": 2,
+  "sent": [
+   "fb0bdef4a95d99a8",
+   "3077ea2d04f24bb8"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 1 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "Tool budget exhausted. Submit your diagnosis now with submit_diagnosis (as JSON if you cannot call it). If the evidence does not single out a service, answer root_cause_service null and list what you ruled out.",
+    "role": "user"
+   },
+   {
+    "content": "no idea",
+    "role": "assistant",
+    "tool_calls": []
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": false
+ },
+ "budget_then_submit": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": true,
+  "diagnosis": {
+   "confidence": 0.4,
+   "evidence": [
+    "payment Charge error ratio 0.67"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "payment",
+    "checkout"
+   ],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": "payment fails charges"
+  },
+  "error": null,
+  "llm_calls": 2,
+  "sent": [
+   "88af5cb6672645ce",
+   "01a9986a81c4f3b5"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 2 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     },
+     {
+      "arguments": {},
+      "id": "c2",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c2"
+   },
+   {
+    "content": "Tool budget exhausted. Submit your diagnosis now with submit_diagnosis (as JSON if you cannot call it). If the evidence does not single out a service, answer root_cause_service null and list what you ruled out.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.4,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 100,
+   "output_tokens": 20
+  },
+  "valid_answer": true
+ },
+ "budget_then_text_answer": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": true,
+  "diagnosis": {
+   "confidence": 0.6,
+   "evidence": [],
+   "fault_type": "error",
+   "ranked_services": [],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": ""
+  },
+  "error": null,
+  "llm_calls": 2,
+  "sent": [
+   "fb0bdef4a95d99a8",
+   "3077ea2d04f24bb8"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 1 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "Tool budget exhausted. Submit your diagnosis now with submit_diagnosis (as JSON if you cannot call it). If the evidence does not single out a service, answer root_cause_service null and list what you ruled out.",
+    "role": "user"
+   },
+   {
+    "content": "{\"root_cause_service\": \"payment\", \"fault_type\": \"error\", \"confidence\": 0.6}",
+    "role": "assistant",
+    "tool_calls": []
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": true
+ },
+ "heuristic_paged": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "5m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.5,
+   "evidence": [
+    "paged by span_errors on checkout"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "checkout"
+   ],
+   "root_cause_service": "checkout",
+   "ruled_out": [],
+   "summary": "the alerting service"
+  },
+  "error": null,
+  "llm_calls": 1,
+  "sent": [],
+  "system": "agent",
+  "tool_calls": [],
+  "transcript": [
+   {
+    "content": "You were paged at 2026-11-03T17:11:07Z by the detector's alert: service checkout, rule span_errors (span.name=PlaceOrder, span.kind=SERVER), opened at 2026-11-03T17:10:20Z. Explain this page: the root cause is a service whose own signals changed at or after 2026-11-03T17:10:20Z. A service that was already degraded before then is an earlier incident: put it in ruled_out, do not name it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"5m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.5,
+       "evidence": [
+        "paged by span_errors on checkout"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "checkout"
+       ],
+       "root_cause_service": "checkout",
+       "summary": "the alerting service"
+      },
+      "id": "h1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": true
+ },
+ "heuristic_unpaged": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "no service crossed a threshold"
+  },
+  "error": null,
+  "llm_calls": 1,
+  "sent": [],
+  "system": "agent",
+  "tool_calls": [],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.0,
+       "evidence": [],
+       "fault_type": "unknown",
+       "ranked_services": [],
+       "root_cause_service": null,
+       "summary": "no service crossed a threshold"
+      },
+      "id": "h1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": true
+ },
+ "invalid_submit": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "invalid submit_diagnosis arguments"
+  },
+  "error": null,
+  "llm_calls": 1,
+  "sent": [
+   "f84d1e9fa3a9e2f9"
+  ],
+  "system": "agent",
+  "tool_calls": [],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 3 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 5,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 100,
+   "output_tokens": 20
+  },
+  "valid_answer": false
+ },
+ "model_error_at_start": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "5m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "model error: scripted model ran out of replies"
+  },
+  "error": "scripted model ran out of replies",
+  "llm_calls": 0,
+  "sent": [
+   "e2d4120275042583"
+  ],
+  "system": "agent",
+  "tool_calls": [],
+  "transcript": [
+   {
+    "content": "You were paged at 2026-11-03T17:11:07Z by the detector's alert: service checkout, rule span_errors (span.name=PlaceOrder, span.kind=SERVER), opened at 2026-11-03T17:10:20Z. Explain this page: the root cause is a service whose own signals changed at or after 2026-11-03T17:10:20Z. A service that was already degraded before then is an earlier incident: put it in ruled_out, do not name it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"5m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": false
+ },
+ "model_error_mid_run": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "model error: scripted model ran out of replies"
+  },
+  "error": "scripted model ran out of replies",
+  "llm_calls": 1,
+  "sent": [
+   "7de7784ae77b84c8",
+   "32b4168ad5eea60d"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   }
+  ],
+  "usage": {
+   "input_tokens": 500,
+   "output_tokens": 40
+  },
+  "valid_answer": false
+ },
+ "nudge_then_recover": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.8,
+   "evidence": [
+    "payment Charge error ratio 0.67"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "payment",
+    "checkout"
+   ],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": "payment fails charges"
+  },
+  "error": null,
+  "llm_calls": 3,
+  "sent": [
+   "7de7784ae77b84c8",
+   "c9808d3d532c771b",
+   "bd43fac393bc8b16"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "hmm",
+    "role": "assistant",
+    "tool_calls": []
+   },
+   {
+    "content": "Use the tools to investigate, or call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.8,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 100,
+   "output_tokens": 20
+  },
+  "valid_answer": true
+ },
+ "paged_tools_then_submit": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "5m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/timeseries",
+    {
+     "service": "payment",
+     "signal": "errors",
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.8,
+   "evidence": [
+    "payment Charge error ratio 0.67"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "payment",
+    "checkout"
+   ],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": "payment fails charges"
+  },
+  "error": null,
+  "llm_calls": 2,
+  "sent": [
+   "e2d4120275042583",
+   "c7a494b0b92d2872"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {
+     "service": "payment",
+     "signal": "errors"
+    },
+    "chars": 146,
+    "ms": 0,
+    "name": "timeseries",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "You were paged at 2026-11-03T17:11:07Z by the detector's alert: service checkout, rule span_errors (span.name=PlaceOrder, span.kind=SERVER), opened at 2026-11-03T17:10:20Z. Explain this page: the root cause is a service whose own signals changed at or after 2026-11-03T17:10:20Z. A service that was already degraded before then is an earlier incident: put it in ruled_out, do not name it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"5m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "service": "payment",
+       "signal": "errors"
+      },
+      "id": "c1",
+      "name": "timeseries"
+     }
+    ]
+   },
+   {
+    "content": "{\"masked_lines\":3,\"window\":\"10m0s\",\"data\":{\"path\":\"/v1/timeseries\",\"args\":{\"service\":\"payment\",\"signal\":\"errors\",\"until\":\"2026-11-03T17:11:07Z\"}}}",
+    "name": "timeseries",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.8,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 600,
+   "output_tokens": 60
+  },
+  "valid_answer": true
+ },
+ "stall_two_nudges": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "no tool call and no diagnosis after 2 reminders"
+  },
+  "error": null,
+  "llm_calls": 3,
+  "sent": [
+   "7de7784ae77b84c8",
+   "c9808d3d532c771b",
+   "59c13d188ad3aeef"
+  ],
+  "system": "agent",
+  "tool_calls": [],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "hmm",
+    "role": "assistant",
+    "tool_calls": []
+   },
+   {
+    "content": "Use the tools to investigate, or call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "hmm",
+    "role": "assistant",
+    "tool_calls": []
+   },
+   {
+    "content": "Use the tools to investigate, or call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "hmm",
+    "role": "assistant",
+    "tool_calls": []
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": false
+ },
+ "submit_at_once": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.8,
+   "evidence": [
+    "payment Charge error ratio 0.67"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "payment",
+    "checkout"
+   ],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": "payment fails charges"
+  },
+  "error": null,
+  "llm_calls": 1,
+  "sent": [
+   "7de7784ae77b84c8"
+  ],
+  "system": "agent",
+  "tool_calls": [],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.8,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 100,
+   "output_tokens": 20
+  },
+  "valid_answer": true
+ },
+ "text_answer_with_budget_left": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.3,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": "cart",
+   "ruled_out": [],
+   "summary": ""
+  },
+  "error": null,
+  "llm_calls": 1,
+  "sent": [
+   "7de7784ae77b84c8"
+  ],
+  "system": "agent",
+  "tool_calls": [],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "answer: {\"root_cause_service\": \"cart\", \"confidence\": 0.3}",
+    "role": "assistant",
+    "tool_calls": []
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": true
+ },
+ "tool_error": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/spans",
+    {
+     "service": "nope",
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.8,
+   "evidence": [
+    "payment Charge error ratio 0.67"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "payment",
+    "checkout"
+   ],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": "payment fails charges"
+  },
+  "error": null,
+  "llm_calls": 2,
+  "sent": [
+   "f84d1e9fa3a9e2f9",
+   "d6ee3b43692315bc"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {
+     "service": "nope"
+    },
+    "chars": 55,
+    "ms": 0,
+    "name": "spans",
+    "ok": false
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 3 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "service": "nope"
+      },
+      "id": "c1",
+      "name": "spans"
+     }
+    ]
+   },
+   {
+    "content": "error: unknown service \"nope\"; known: checkout, payment",
+    "name": "spans",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.8,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 100,
+   "output_tokens": 20
+  },
+  "valid_answer": true
+ },
+ "tools_then_submit": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/spans",
+    {
+     "service": "checkout",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "5m"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.8,
+   "evidence": [
+    "payment Charge error ratio 0.67"
+   ],
+   "fault_type": "error",
+   "ranked_services": [
+    "payment",
+    "checkout"
+   ],
+   "root_cause_service": "payment",
+   "ruled_out": [],
+   "summary": "payment fails charges"
+  },
+  "error": null,
+  "llm_calls": 2,
+  "sent": [
+   "7de7784ae77b84c8",
+   "15cdb5f7fce1002c"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {
+     "service": "checkout",
+     "window": "5m"
+    },
+    "chars": 135,
+    "ms": 0,
+    "name": "spans",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 5 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "look",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "service": "checkout",
+       "window": "5m"
+      },
+      "id": "c1",
+      "name": "spans"
+     }
+    ]
+   },
+   {
+    "content": "{\"masked_lines\":3,\"window\":\"5m\",\"data\":{\"path\":\"/v1/spans\",\"args\":{\"service\":\"checkout\",\"window\":\"5m\",\"until\":\"2026-11-03T17:11:07Z\"}}}",
+    "name": "spans",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {
+       "confidence": 0.8,
+       "evidence": [
+        "payment Charge error ratio 0.67"
+       ],
+       "fault_type": "error",
+       "ranked_services": [
+        "payment",
+        "checkout"
+       ],
+       "root_cause_service": "payment",
+       "summary": "payment fails charges"
+      },
+      "id": "s1",
+      "name": "submit_diagnosis"
+     }
+    ]
+   }
+  ],
+  "usage": {
+   "input_tokens": 600,
+   "output_tokens": 60
+  },
+  "valid_answer": true
+ },
+ "turn_limit": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "no diagnosis after 16 model turns"
+  },
+  "error": null,
+  "llm_calls": 16,
+  "sent": [
+   "819c1cae7de5c176",
+   "9079dc4c9608f237",
+   "fc20d598acb53172",
+   "b745ef704ed5eb8c",
+   "92987023999037b8",
+   "745d6c81dc95afb3",
+   "a8b30a0b615afee2",
+   "3c373b55efedaa4c",
+   "de0bb32871624c47",
+   "639c455a9604972e",
+   "f22fd87f3e03031f",
+   "2494f5322b181bda",
+   "c5abec998573da19",
+   "6d33eae7fe7df1a8",
+   "0c785de2fa7ace9c",
+   "eb8b13188148e432"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 100 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c0",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c0"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c2",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c2"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c3",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c3"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c4",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c4"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c5",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c5"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c6",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c6"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c7",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c7"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c8",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c8"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c9",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c9"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c10",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c10"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c11",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c11"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c12",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c12"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c13",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c13"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c14",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c14"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c15",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c15"
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": false
+ },
+ "turn_limit_with_nudges": {
+  "api_calls": [
+   [
+    "/v1/overview",
+    {
+     "baseline": "30m",
+     "until": "2026-11-03T17:11:07Z",
+     "window": "2m"
+    }
+   ],
+   [
+    "/v1/anomalies",
+    {
+     "until": "2026-11-03T17:11:07Z",
+     "window": "15m"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ],
+   [
+    "/v1/overview",
+    {
+     "until": "2026-11-03T17:11:07Z"
+    }
+   ]
+  ],
+  "budget_exhausted": false,
+  "diagnosis": {
+   "confidence": 0.0,
+   "evidence": [],
+   "fault_type": "unknown",
+   "ranked_services": [],
+   "root_cause_service": null,
+   "ruled_out": [],
+   "summary": "no diagnosis after 16 model turns"
+  },
+  "error": null,
+  "llm_calls": 16,
+  "sent": [
+   "819c1cae7de5c176",
+   "e836f3359885b347",
+   "2db8a11864386b19",
+   "adfeb36cb288d7e6",
+   "28f077cf06d6ab4a",
+   "a5deb0b1db009822",
+   "7a012c741973c75c",
+   "9987e0518dafe2e9",
+   "f4812435cc399da8",
+   "ac789ea0334e57d8",
+   "ab71dbf39be2c079",
+   "756136de1cec1baa",
+   "f8238e44b577168e",
+   "96adf4731922c25b",
+   "f1b2061bf7073b54",
+   "f6d6bab7f52b057b"
+  ],
+  "system": "agent",
+  "tool_calls": [
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   },
+   {
+    "arguments": {},
+    "chars": 245,
+    "ms": 0,
+    "name": "overview",
+    "ok": true
+   }
+  ],
+  "transcript": [
+   {
+    "content": "An incident was reported at 2026-11-03T17:11:07Z; no single alert identifies it.\n\nTriage at that moment:\n\n## overview {\"window\": \"2m\", \"baseline\": \"30m\"}\nmasked_lines=3 window=2m baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)\n\n## anomalies {\"window\": \"15m\"}\n{\"masked_lines\":3,\"window\":\"15m\",\"data\":{\"path\":\"/v1/anomalies\",\"args\":{\"window\":\"15m\",\"until\":\"2026-11-03T17:11:07Z\"}}}\n\nYou have 100 tool calls. Investigate, then call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "x",
+    "role": "assistant",
+    "tool_calls": []
+   },
+   {
+    "content": "Use the tools to investigate, or call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "x",
+    "role": "assistant",
+    "tool_calls": []
+   },
+   {
+    "content": "Use the tools to investigate, or call submit_diagnosis.",
+    "role": "user"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c0",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c0"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c1",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c1"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c2",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c2"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c3",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c3"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c4",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c4"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c5",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c5"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c6",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c6"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c7",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c7"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c8",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c8"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c9",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c9"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c10",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c10"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c11",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c11"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c12",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c12"
+   },
+   {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "arguments": {},
+      "id": "c13",
+      "name": "overview"
+     }
+    ]
+   },
+   {
+    "content": "masked_lines=3 window=10m0s baseline=None\nno service crossed a change threshold\nall services, now/before: server calls/min | server error ratio | server p95 ms | log lines/min | warn+error lines/min | cpu | memory MiB (trend MiB/min, % of limit)",
+    "name": "overview",
+    "role": "tool",
+    "tool_call_id": "c13"
+   }
+  ],
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0
+  },
+  "valid_answer": false
+ }
+}

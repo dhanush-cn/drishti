@@ -162,7 +162,7 @@ recordings. They decide what the agent looks at first, not what it concludes.
 
 `agent/` (Python, one dependency: Pydantic; HTTP is the standard library).
 
-**Agent v0 (`agent.py`): a plain tool-calling loop.** Week 6 turns it into a LangGraph hypothesis graph.
+**Agent v0 (`agent.py`): a plain tool-calling loop.** Week 6 turns it into a LangGraph hypothesis graph. Patch 56 ported this loop into LangGraph first (nodes triage → model ⇄ tools) with no behaviour change: `tests/test_graph_parity.py` replays 19 scripted paths and requires the same results, model requests and query API calls that the Week 5 loop recorded. Prompts are unchanged (`40abe73ebe28`), so the freeze still holds.
 1. **Triage first, no LLM:** the harness calls `overview` (the last 2 m vs the 30 m before, or vs the 5 m
    before when paged; see §5) and
    `anomalies` itself and puts both in the first message, after a one-line briefing: the alert that paged

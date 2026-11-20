@@ -2,10 +2,16 @@
 name = "drishti-agent"
 version = "0.1.0"
 description = "Drishti's root-cause agent, one-prompt baseline and eval harness (docs/evals.md)"
-requires-python = ">=3.10"
-# One dependency on purpose: typed tool results and answers. HTTP is the
-# standard library, so the code that talks to the model is code we can read.
-dependencies = ["pydantic>=2.5"]
+# langchain-core (a LangGraph dependency) needs 3.11.
+requires-python = ">=3.11"
+# Each dependency earns its place:
+# - pydantic: typed tool results and answers.
+# - langgraph (patch 56): the investigation as a graph whose state is saved between steps, so Week 6 can
+#   resume after a crash, pause for a human and loop over hypotheses. Pinned exactly: defaults change
+#   between versions (the step limit went from 25 to 10,007 in 1.x).
+# Model calls do NOT go through LangChain: llm.py talks HTTP with the standard library, so the code that
+# talks to the model is code we can read, and Gemini's thought signatures go back verbatim (patch 50).
+dependencies = ["pydantic>=2.5", "langgraph==1.2.24"]
 
 [project.scripts]
 drishti-eval = "drishti_agent.evals.run:main"

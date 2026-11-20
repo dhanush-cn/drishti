@@ -92,9 +92,15 @@ case "${1:-}" in
     ;;
   run)
     name=${2:?name}; tl=${3:?timeline}; out=${4:?out dir}; shift 4
-    if [[ ! -x agent/.venv/bin/python ]]; then
-      python3 -m venv agent/.venv
+    # Reinstall whenever pyproject.toml changes (patch 56 added LangGraph): an existing venv would
+    # otherwise keep the old dependencies. LangGraph's langchain-core needs Python >= 3.11.
+    if [[ ! -x agent/.venv/bin/python ]] || ! cmp -s agent/pyproject.toml agent/.venv/pyproject.installed; then
+      [[ -x agent/.venv/bin/python ]] || python3 -m venv agent/.venv
+      agent/.venv/bin/python -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+        echo "the agent needs Python >= 3.11 (LangGraph); agent/.venv has $(agent/.venv/bin/python --version)."
+        echo "Install python3.11+ (e.g. sudo apt install python3.12-venv), then: rm -rf agent/.venv and rerun."; exit 1; }
       agent/.venv/bin/pip install -q -e agent
+      cp agent/pyproject.toml agent/.venv/pyproject.installed
     fi
     (cd agent && .venv/bin/python -W ignore -m unittest discover -s tests >/dev/null 2>&1) || { echo "agent unit tests failed"; exit 1; }
     DRISHTI_GIT_COMMIT=$(git rev-parse --short HEAD) agent/.venv/bin/python -m drishti_agent.evals.run \
