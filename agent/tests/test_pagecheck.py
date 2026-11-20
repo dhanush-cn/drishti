@@ -124,7 +124,7 @@ class GraphAPI(QueryAPI):
             }.get(s, [])
             return {"data": rows}
         if path == "/v1/timeseries":
-            key = (q["service"], q["signal"], q.get("span", ""))
+            key = (q["service"], q["signal"], q.get("span", "")) + ((q["kind"],) if q.get("kind", "server") != "server" else ())
             if key not in self.ts:
                 raise APIError(f"no series {key}")
             return {"data": {"points": self.ts[key]}}
@@ -189,10 +189,18 @@ class POnset(unittest.TestCase):
         got = self.onset(mem)[0]
         self.assertLess(pc.parse_ts(got), pc.parse_ts(at(30)), "the climb's start, long before the alert")
 
-    def test_client_span_pages_fall_back_to_the_window_and_say_so(self):
+    def test_client_span_pages_are_timed_from_the_client_series(self):
         client = {"service": "frontend", "rule": "span_errors", "opened_at": at(32), "window": "2m0s",
                   "series": {"span.name": "GetProduct", "span.kind": "CLIENT"}}
-        t, how = self.onset(client)
+        ts = {("frontend", "error_ratio", "GetProduct", "client"): series([0.0] * 28 + [0.4] * 32)}
+        t, how = self.onset(client, ts)
+        self.assertEqual(t, at(28))
+        self.assertIn("CLIENT", how)
+
+    def test_other_span_kinds_fall_back_to_the_window_and_say_so(self):
+        producer = {"service": "checkout", "rule": "span_errors", "opened_at": at(32), "window": "2m0s",
+                    "series": {"span.name": "orders publish", "span.kind": "PRODUCER"}}
+        t, how = self.onset(producer)
         self.assertEqual(t, pc.iso(pc.parse_ts(at(32)) - timedelta(minutes=2)))
         self.assertIn("coarse", how)
 

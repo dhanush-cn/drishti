@@ -361,10 +361,10 @@ def p_onset(b: Budget, alert: dict) -> tuple[Optional[str], str]:
         kind, name = series.get("span.kind", ""), series.get("span.name", "")
         sig, direction = {"span_errors": ("error_ratio", "up"), "span_slow": ("p95_ms", "up"),
                           "span_traffic_surge": ("calls", "up"), "span_traffic_drop": ("calls", "down")}.get(rule, (None, "up"))
-        if kind != "SERVER" or sig is None:
-            # /v1/timeseries reads SERVER spans only until patch 58 adds kind=client.
-            return fallback, f"start of the window that fired ({window}); {kind or 'unknown'} span series not timed yet (coarse)"
-        data = b.get("/v1/timeseries", service=alert["service"], signal=sig, span=name, window=ONSET_WINDOW, step=STEP)
+        if kind not in ("SERVER", "CLIENT") or sig is None:
+            # /v1/timeseries reads SERVER and CLIENT span series (patch 59); others aren't timed.
+            return fallback, f"start of the window that fired ({window}); {kind or 'unknown'} span series not timed (coarse)"
+        data = b.get("/v1/timeseries", service=alert["service"], signal=sig, span=name, kind=kind.lower(), window=ONSET_WINDOW, step=STEP)
         if data is None:
             return fallback, "window start (timeseries unavailable or cap reached)"
         o = onset_of(data.get("points") or [], sig, direction)

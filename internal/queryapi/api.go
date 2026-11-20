@@ -752,10 +752,18 @@ type Point struct {
 type Series struct {
 	Service string  `json:"service"`
 	Signal  string  `json:"signal"`
+	Kind    string  `json:"kind,omitempty"` // span signals: server or client
 	Unit    string  `json:"unit"`
 	Step    string  `json:"step"`
 	Points  []Point `json:"points"`
 }
+
+// spanSignals read span metrics, and take kind=server|client (default server).
+// Client series are what a victim sees of its callee: page_check (agent,
+// patch 57) times a page that fired on a CLIENT span series from them.
+var spanSignals = map[string]bool{"calls": true, "errors": true, "error_ratio": true, "p95_ms": true}
+
+var spanKinds = map[string]string{"": "SPAN_KIND_SERVER", "server": "SPAN_KIND_SERVER", "client": "SPAN_KIND_CLIENT"}
 
 var signals = map[string]string{
 	"calls": "server calls per step", "errors": "server errors per step", "error_ratio": "ratio",
@@ -777,6 +785,14 @@ func (a *API) timeseries(ctx context.Context, q *req) (any, error) {
 		slices.Sort(keys)
 		return nil, bad("signal must be one of %s", strings.Join(keys, ", "))
 	}
+	kindArg := q.r.URL.Query().Get("kind")
+	kind, ok := spanKinds[kindArg]
+	if !ok {
+		return nil, bad("kind must be server or client")
+	}
+	if kindArg != "" && !spanSignals[sig] {
+		return nil, bad("kind applies to span signals only (calls, errors, error_ratio, p95_ms)")
+	}
 	step := time.Minute
 	if s := q.r.URL.Query().Get("step"); s != "" {
 		if step, err = time.ParseDuration(s); err != nil || step < 5*time.Second {
@@ -793,8 +809,12 @@ func (a *API) timeseries(ctx context.Context, q *req) (any, error) {
 	params["lo"] = ts(q.winStart())
 	params["until"] = ts(q.until)
 	params["owners"] = stringArray(owners)
+	params["kind"] = kind
 	bucket := `toStartOfInterval(ts, toIntervalSecond({step:UInt32}), 'UTC')`
-	spanFilter := `({span:String} = '' OR attributes['span.name'] = {span:String}) AND attributes['span.kind'] = 'SPAN_KIND_SERVER'`
+	// Flag-system spans are dropped as /v1/spans drops them (a.mask.Text), here in SQL because the
+	// series is summed in SQL: their rate moves when a flag changes, and every service makes them
+	// as CLIENT calls (flagd.evaluation…).
+	spanFilter := `({span:String} = '' OR attributes['span.name'] = {span:String}) AND attributes['span.kind'] = {kind:String} AND NOT ` + MaskedSpanSQL
 	type pt struct {
 		T int64     `json:"t"`
 		V *float64  `json:"v"`
@@ -832,6 +852,10 @@ GROUP BY t ORDER BY t`
 		return nil, err
 	}
 	out := Series{Service: name, Signal: sig, Unit: signals[sig], Step: step.String(), Points: []Point{}}
+	if spanSignals[sig] {
+		out.Kind = strings.ToLower(strings.TrimPrefix(kind, "SPAN_KIND_"))
+		out.Unit = strings.Replace(out.Unit, "server ", out.Kind+" ", 1)
+	}
 	for _, r := range rows {
 		p := Point{T: time.UnixMilli(r.T).UTC(), V: nz(r.V)}
 		if sig == "p95_ms" {

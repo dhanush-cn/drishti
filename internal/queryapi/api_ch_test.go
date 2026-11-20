@@ -333,6 +333,36 @@ func TestAPI_EndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("timeseries: client spans, flag system excluded", func(t *testing.T) {
+		sum := func(params ...string) (float64, Series, string) {
+			_, env, raw := call(t, srv, "/v1/timeseries", params...)
+			s := data[Series](t, env)
+			total := 0.0
+			for _, p := range s.Points {
+				if p.V != nil {
+					total += *p.V
+				}
+			}
+			return total, s, raw
+		}
+		// checkout's CLIENT Charge calls: 4 per 30 s, 10 minutes of window.
+		total, s, raw := sum("service", "checkout", "signal", "calls", "kind", "client", "step", "60s")
+		if total != 80 || s.Kind != "client" || !strings.HasPrefix(s.Unit, "client ") {
+			t.Errorf("checkout client calls = %v (kind %q, unit %q), want 80 client calls: %s", total, s.Kind, s.Unit, raw)
+		}
+		// The default is still SERVER: checkout serves nothing in the fixture.
+		if total, s, _ := sum("service", "checkout", "signal", "calls", "step", "60s"); total != 0 || s.Kind != "server" {
+			t.Errorf("checkout server calls = %v (kind %q), want 0 server", total, s.Kind)
+		}
+		// cart's only CLIENT spans are flag-system calls, whose rate moves: none may count.
+		if total, _, raw := sum("service", "cart", "signal", "calls", "kind", "client", "step", "60s"); total != 0 {
+			t.Errorf("cart client calls = %v, want 0 (flagd.evaluation spans dropped): %s", total, raw)
+		}
+		if total, _, _ := sum("service", "cart", "signal", "calls", "step", "60s"); total != 80 {
+			t.Errorf("cart server calls = %v, want 80 (GetCart only)", total)
+		}
+	})
+
 	t.Run("bad requests", func(t *testing.T) {
 		for _, c := range []struct {
 			path   string
@@ -344,6 +374,8 @@ func TestAPI_EndToEnd(t *testing.T) {
 			{"/v1/logs", []string{"service", "flagd"}, "unknown service"},
 			{"/v1/logs", []string{"service", "container:drishti-kafka"}, "unknown service"},
 			{"/v1/timeseries", []string{"service", "payment", "signal", "nope"}, "signal must be one of"},
+			{"/v1/timeseries", []string{"service", "payment", "signal", "calls", "kind", "internal"}, "kind must be server or client"},
+			{"/v1/timeseries", []string{"service", "email", "signal", "memory_mib", "kind", "client"}, "kind applies to span signals"},
 		} {
 			code, _, raw := call(t, srv, c.path, c.params...)
 			if code != 400 || !strings.Contains(raw, c.want) {
@@ -399,5 +431,46 @@ func TestMasker_SQLAgreesWithGo(t *testing.T) {
 		if goSays := m.Line(l.body, attrs); goSays != (r.Masked == 1) {
 			t.Errorf("line %d %q %v: SQL masked=%d, Go %v", i, l.body, l.attrs, r.Masked, goSays)
 		}
+	}
+}
+
+// MaskedSpanSQL and Masker.Text decide the same for span names.
+func TestMasker_SpanSQLAgreesWithGo(t *testing.T) {
+	s := chtest.New(t, "003_metrics.sql")
+	m := NewMasker(DemoFlags)
+	names := []string{"flagd.evaluation.v2.Service/ResolveBoolean", "oteldemo.PaymentService/Charge", "GET /flagservice/ofrep",
+		"router flagd-ui egress", "oteldemo.CartService/GetCart", "FLAGD.Sync", "adHighCpu worker", "ünïcode span"}
+	f := &fixture{}
+	for i, n := range names {
+		mm, res := calls("svc", "SPAN_KIND_CLIENT", n, "STATUS_CODE_UNSET", float64(i), t0)
+		f.metric(res, mm, t0)
+	}
+	body, _, err := storage.Metrics.Encode(f.metrics, f.msrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := &storage.CH{URL: s.URL, User: s.User, Password: s.Password, Table: s.DB + ".metrics", Columns: storage.Metrics.Columns}
+	if err := ch.Insert(context.Background(), "m", body); err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		Span   string `json:"span"`
+		Masked uint8  `json:"masked"`
+	}
+	rows, err := Rows[row](context.Background(), &CH{URL: s.URL, User: s.User, Password: s.Password},
+		"SELECT attributes['span.name'] AS span, "+MaskedSpanSQL+" AS masked FROM "+s.DB+".metrics",
+		map[string]string{"mask_terms": stringArray(m.Terms())})
+	if err != nil || len(rows) != len(names) {
+		t.Fatal(len(rows), err)
+	}
+	masked := 0
+	for _, r := range rows {
+		if goSays := m.Text(r.Span); goSays != (r.Masked == 1) {
+			t.Errorf("span %q: SQL masked=%d, Go %v", r.Span, r.Masked, goSays)
+		}
+		masked += int(r.Masked)
+	}
+	if masked != 5 {
+		t.Errorf("%d span names masked, want 5 (three flag-system names, FLAGD in caps, a flag name)", masked)
 	}
 }

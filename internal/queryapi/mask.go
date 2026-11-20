@@ -58,6 +58,11 @@ const MaskedSQL = `(multiSearchAnyCaseInsensitiveUTF8(body, {mask_terms:Array(St
      OR arrayExists(v -> multiSearchAnyCaseInsensitiveUTF8(v, {mask_terms:Array(String)}), mapValues(log_attributes))
      OR arrayExists(k -> startsWith(lower(k), 'feature_flag'), mapKeys(log_attributes)))`
 
+// MaskedSpanSQL is Text over a span metric row's span name, as a ClickHouse
+// predicate taking {mask_terms:Array(String)}: for endpoints that sum spans in
+// SQL. TestMasker_SpanSQLAgreesWithGo checks it against Text.
+const MaskedSpanSQL = `multiSearchAnyCaseInsensitiveUTF8(attributes['span.name'], {mask_terms:Array(String)})`
+
 // Text reports whether s must be masked.
 func (m *Masker) Text(s string) bool {
 	if s == "" {

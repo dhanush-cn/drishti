@@ -56,9 +56,15 @@ p95 ≥ 2× and +20 ms, CPU ≥ 2× and +1 point, calls ×3 / ÷3 (≥ 1/min), m
   direction: past it = worsening, past it the other way = recovering, else holding. Memory: slope over the last
   4 minutes, ±1 MiB/min.
 - **The paging service's onset, by the rule that fired.** New template: "first seen" from the alert's evidence.
-  Template or error-log spike: the start of the window that fired. Span rules: that span's own timeseries for a
-  SERVER series; a CLIENT series falls back to the window start and says so (`/v1/timeseries` reads SERVER spans
-  only until patch 58). Memory: the climb's knee.
+  Template or error-log spike: the start of the window that fired. Span rules: that span's own timeseries, SERVER
+  or CLIENT, whichever fired (`/v1/timeseries kind=client`, patch 59); other kinds fall back to the window start and
+  say so. Memory: the climb's knee.
+
+**Patch 59, `/v1/timeseries kind=server|client`.** Span signals default to SERVER as before. Flag-system spans
+(`flagd.evaluation…` calls, the proxy's flagd-ui route) are now dropped in SQL (`MaskedSpanSQL`, checked against the
+Go masker): every service makes them as CLIENT calls and their rate moves when a flag flips. This also changes the
+SERVER path, which summed a service's flag-system SERVER spans into its series while `/v1/spans` already dropped
+them. That leak is numeric, so `scripts/leakcheck.py` (which searches text) can't see it; the query API's tests do.
 
 ### F4: naming a service other than the paged one (end-to-end only)
 
