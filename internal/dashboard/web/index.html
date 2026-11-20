@@ -126,7 +126,14 @@ function card(a) {
     <div class="top"><span class="rule">${RULES[a.rule] || esc(a.rule)}</span><span class="svc">${esc(a.service)}</span>
     <span class="when" title="detected ${delay >= 0 ? (delay / 1000).toFixed(1) + " s after its newest evidence" : ""}">${when}</span></div>
     <div class="series">${seriesText(a)}</div>
-    <div class="ev">${evidence(a)}</div></div>`;
+    <div class="ev">${evidence(a)}</div>${investigate(a)}</div>`;
+}
+
+// The agent service's page for this alert (docs/agent.md section 8), when /config.json names one. Open alerts only.
+let AGENT_URL = "";
+function investigate(a) {
+  if (!AGENT_URL || a.event === "resolved") return "";
+  return `<div class="inv"><a href="${esc(AGENT_URL)}/ui/anomaly/${encodeURIComponent(a.id)}" target="_blank" rel="noopener">Investigate</a></div>`;
 }
 
 function safeCard(a) {
@@ -236,6 +243,7 @@ function connect() {
   es.addEventListener("live", ev => { addLive(JSON.parse(ev.data)); });
   es.onerror = () => { $("conn").className = "dot off"; $("connText").textContent = "reconnecting"; };
 }
+fetch("/config.json").then(r => r.json()).then(c => { AGENT_URL = c.agent_url || ""; renderAnomalies(); }).catch(() => {});
 connect();
 setInterval(() => { renderServices(); renderFresh(); }, 1000);
 setInterval(renderAnomalies, 5000); // relative times

@@ -11,9 +11,12 @@ requires-python = ">=3.11"
 #   between versions (the step limit went from 25 to 10,007 in 1.x).
 # - langgraph-checkpoint-postgres + psycopg (patch 61): the graph's state saved in Postgres after every step, so an
 #   investigation survives a crash and can wait for a human's approval across restarts.
+# - fastapi + uvicorn + psycopg-pool (patch 66): the agent service (start, watch over SSE, approve), with a pool so
+#   several investigations share the Postgres checkpointer safely.
 # Model calls do NOT go through LangChain: llm.py talks HTTP with the standard library, so the code that
 # talks to the model is code we can read, and Gemini's thought signatures go back verbatim (patch 50).
-dependencies = ["pydantic>=2.5", "langgraph==1.2.24", "langgraph-checkpoint-postgres==3.2.1", "psycopg[binary]==3.3.9"]
+dependencies = ["pydantic>=2.5", "langgraph==1.2.24", "langgraph-checkpoint-postgres==3.2.1", "psycopg[binary]==3.3.9",
+                "psycopg-pool==3.3.3", "fastapi==0.165.0", "uvicorn==0.54.0"]
 
 [project.scripts]
 drishti-eval = "drishti_agent.evals.run:main"

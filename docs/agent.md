@@ -246,3 +246,36 @@ Tests (`tests/test_remediate.py`): the executor's guards and idempotency on an i
 local query API that recovers, relapses or never recovers; the full approve and reject flows; unsure proposes nothing;
 a crash during execute. Eight breaks (no approval check, no allowlist, every flag rolled back, writing when nothing
 changed, a relapse not resetting the count, one good check enough, a rejection executing, no pause) each turn a test red.
+
+## 8. The agent service and the dashboard link (patch 66)
+
+`drishti_agent/service.py` (FastAPI), run with `scripts/agent-service.sh` on `127.0.0.1:8092`:
+
+| | |
+|---|---|
+| `POST /v1/investigations {"anomaly_id"}` | start (201), or the existing run for that alert (200) |
+| `GET /v1/investigations[/{id}]` | recent runs; one run's status, diagnosis, proposal, action, recovery |
+| `GET /v1/investigations/{id}/events?after=N` | SSE: every event after N, then live ones; ends with `done` |
+| `POST /v1/investigations/{id}/decision {"approve", "by"}` | resumes a run waiting for approval; 400 without `by`, 409 if not waiting |
+| `GET /ui/anomaly/{anomaly_id}` | a page: start, watch, approve or reject |
+
+- **Manual trigger.** Every investigation costs model calls; auto-investigating every alert needs Week 8's rate limit and
+  daily spend cap. At most 2 run at once. One run per alert (its thread id comes from the anomaly id).
+- **Durable.** Checkpoints, each run's events (a page opened later replays them), the runbook index and live incident
+  memory are all in the agent's Postgres. A run waiting for approval survives a restart; a run killed midway (status
+  still `running`) is resumed from its checkpoint when the service starts (both tested).
+- **One decision per approval.** The decision endpoint changes the status from `awaiting_approval` atomically, so a
+  second click gets 409 instead of a second execution.
+- **Memory, live:** a finished run is remembered unconfirmed; a verified recovery confirms it.
+- **The page** shows event text with `textContent` only (it comes from a model) and closes its stream on `done`
+  (EventSource would otherwise reconnect on its own). After a decision it follows from the last event it saw.
+- **Natively in WSL, not a container:** Docker Desktop's host gateway reaches Windows, not the WSL distro (Week 1), and
+  Ollama runs in WSL. Natively, the query API, Postgres, the demo's flag API and Ollama are all on localhost.
+- **Dashboard:** `-agent-url` (`DRISHTI_AGENT_URL`) is served at `/config.json`; each open alert's card gets an
+  Investigate link to the agent's page. The agent's page starts the run (same origin), so the dashboard sends nothing
+  to the agent and needs no CORS.
+
+Tests (`tests/test_service.py`, Postgres): start, one run per alert, SSE, decision validation, approve → executed and
+verified → remembered confirmed; reject; unknown alert; a restart while waiting; a run killed midway resumed at
+startup; the page never uses innerHTML. Five breaks (no atomic claim, no resume at startup, recovery not remembered, a
+run per click, no `by` check) each turn a test red. Go: `/config.json` and the page's link (2 breaks red).

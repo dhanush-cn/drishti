@@ -16,10 +16,29 @@ import (
 //go:embed web/index.html
 var indexHTML []byte
 
+// PageConfig is what the page reads from /config.json.
+type PageConfig struct {
+	// AgentURL, when set, gives every open alert's card an Investigate link to
+	// the agent service's page for that alert (docs/agent.md section 8). The
+	// agent's page starts the run itself (same origin, no CORS), so the
+	// dashboard never sends anything to the agent.
+	AgentURL string `json:"agent_url"`
+}
+
 // Handler serves the page, the SSE stream and a JSON snapshot. Its own mux:
 // this process never serves http.DefaultServeMux (see internal/pprofsrv).
 func Handler(st *State, heartbeat time.Duration) http.Handler {
+	return HandlerWithConfig(st, heartbeat, PageConfig{})
+}
+
+// HandlerWithConfig is Handler with the page's configuration.
+func HandlerWithConfig(st *State, heartbeat time.Duration, cfg PageConfig) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /config.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(cfg)
+	})
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")

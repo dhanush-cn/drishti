@@ -165,6 +165,8 @@ services:
     environment:
       DRISHTI_KAFKA_BROKERS: "kafka:29092"
       DRISHTI_DASHBOARD_ADDR: ":8088"
+      # The agent service's URL as the browser reaches it (scripts/agent-service.sh); empty = no Investigate link.
+      DRISHTI_AGENT_URL: "${DRISHTI_AGENT_URL:-}"
       GOMEMLIMIT: "128MiB"
       DRISHTI_PPROF_ADDR: ":6060"
     ports:

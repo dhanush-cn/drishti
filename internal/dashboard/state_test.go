@@ -217,3 +217,35 @@ func TestSSE_ChangesAreFlushedAtOnce(t *testing.T) {
 	}
 	t.Fatalf("stream ended before the change: %v", sc.Err())
 }
+
+// /config.json carries the agent's URL; the page builds the Investigate link from it, for open alerts only.
+func TestConfigJSON_AgentURL(t *testing.T) {
+	srv := httptest.NewServer(HandlerWithConfig(NewState(time.Minute), time.Second, PageConfig{AgentURL: "http://127.0.0.1:8092"}))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var c PageConfig
+	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil || c.AgentURL != "http://127.0.0.1:8092" {
+		t.Fatalf("config %+v, err %v", c, err)
+	}
+	plain := httptest.NewServer(Handler(NewState(time.Minute), time.Second))
+	defer plain.Close()
+	r2, err := http.Get(plain.URL + "/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r2.Body.Close()
+	var c2 PageConfig
+	if err := json.NewDecoder(r2.Body).Decode(&c2); err != nil || c2.AgentURL != "" {
+		t.Fatalf("default config %+v, want no agent", c2)
+	}
+	page := string(indexHTML)
+	for _, want := range []string{`fetch("/config.json")`, "/ui/anomaly/${encodeURIComponent(a.id)}", `a.event === "resolved") return ""`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+}

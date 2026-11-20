@@ -30,6 +30,7 @@ func main() {
 		heartbeat = flag.Duration("heartbeat", envDur("DRISHTI_DASHBOARD_HEARTBEAT", 15*time.Second), "SSE keep-alive comment period")
 		statsEv   = flag.Duration("stats-every", envDur("DRISHTI_DASHBOARD_STATS_EVERY", 10*time.Second), "stats log line period")
 		pprofAddr = flag.String("pprof-addr", env("DRISHTI_PPROF_ADDR", ""), "serve /debug/pprof/ on this address; empty = off")
+		agentURL  = flag.String("agent-url", env("DRISHTI_AGENT_URL", ""), "agent service base URL for each open alert's Investigate link; empty = no link")
 	)
 	flag.Parse()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -52,7 +53,7 @@ func main() {
 		os.Exit(1)
 	}
 	srv := &http.Server{
-		Handler:           dashboard.Handler(st, *heartbeat),
+		Handler:           dashboard.HandlerWithConfig(st, *heartbeat, dashboard.PageConfig{AgentURL: strings.TrimRight(*agentURL, "/")}),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: an SSE response lasts as long as the page is open.
 		BaseContext: func(net.Listener) context.Context { return ctx },
