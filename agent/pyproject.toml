@@ -24,3 +24,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["drishti_agent*"]
+
+[tool.setuptools.package-data]
+# The runbooks (patch 63): service facts, the symptoms guide, the recall query set and the rendered runbooks.
+drishti_agent = ["runbooks/*.json", "runbooks/*.md", "runbooks/rendered/*.md"]

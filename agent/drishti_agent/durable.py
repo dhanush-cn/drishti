@@ -71,12 +71,12 @@ def postgres_saver(url: str):
 
 def investigate(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, thread_id: Optional[str] = None,
                 budget: int = graph.DEFAULT_BUDGET, f4: bool = True, pc_cap: int = graph.DEFAULT_CAP, extras=None,
-                crash: Optional[str] = None, crash_mode: str = "exit") -> RunResult:
+                local_tools=None, crash: Optional[str] = None, crash_mode: str = "exit") -> RunResult:
     """Run, resume, or return a finished investigation, by thread id."""
     start = time.monotonic()
     final = {}
     for ev in stream(api, llm, checkpointer, alert, thread_id=thread_id, budget=budget, f4=f4, pc_cap=pc_cap,
-                     extras=extras, crash=crash, crash_mode=crash_mode):
+                     extras=extras, local_tools=local_tools, crash=crash, crash_mode=crash_mode):
         if ev["type"] == "end":
             final = ev["state"]
     return graph.result_from(final, round(time.monotonic() - start, 2))
@@ -122,13 +122,13 @@ def events_for(node: str, update: dict, state: dict) -> list[dict]:
 
 def stream(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, thread_id: Optional[str] = None,
            budget: int = graph.DEFAULT_BUDGET, f4: bool = True, pc_cap: int = graph.DEFAULT_CAP, extras=None,
-           crash: Optional[str] = None, crash_mode: str = "exit"):
+           local_tools=None, crash: Optional[str] = None, crash_mode: str = "exit"):
     """Run, resume, or replay a finished investigation, yielding events as steps finish. The last event is
     {"type": "end", "state": <final state>}. A finished investigation yields only its diagnosis and end."""
     tid = thread_id or investigation_id(alert, api.until)
     hook = crash_point(crash if crash is not None else os.environ.get(CRASH_ENV), crash_mode)
     g = graph.build_graph(api, traced(llm), budget, alert, f4=f4, pc_cap=pc_cap, extras=extras, checkpointer=checkpointer,
-                          after_node=hook)
+                          after_node=hook, local_tools=local_tools)
     config = {"configurable": {"thread_id": tid}, "recursion_limit": graph.RECURSION_LIMIT}
     yield {"type": "start", "thread_id": tid, "alert": alert, "until": api.until}
     snap = g.get_state(config)

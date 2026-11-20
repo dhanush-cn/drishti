@@ -138,11 +138,15 @@ def _fault(x) -> str:
 
 def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = True,
                 pc_cap: int = DEFAULT_CAP, extras: Optional[list[Callable[[dict], str]]] = None, checkpointer=None,
-                after_node: Optional[Callable[[str], None]] = None):
+                after_node: Optional[Callable[[str], None]] = None, local_tools: Optional[dict] = None):
     """One investigation. api, llm, alert and the switches are fixed for its lifetime (closed over); everything
     that changes between steps is in State. `extras` add context for hypothesize (runbooks, memory; patches 63-64).
-    `after_node(name)` runs after a node computes and before its result is saved (durable.py's crash point)."""
+    `after_node(name)` runs after a node computes and before its result is saved (durable.py's crash point).
+    `local_tools` (name -> (schema, function(arguments) -> (ok, text))) are offered in tests next to the query tools,
+    counted against the same budget, and never evidence for the judge (runbooks, patch 63)."""
     extras = extras or []
+    local_tools = local_tools or {}
+    test_tools = TOOLS + [schema for schema, _ in local_tools.values()]
     pc_holder: dict = {}
 
     def pc_of(state: State) -> PageCheck:
@@ -241,7 +245,7 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
             transcript.append({"role": "phase", "content": f"test {h['id']} {h['service']}"})
         can_query = state["hyp_used"] < PER_HYPOTHESIS and state["used"] < budget
         try:
-            reply, msgs2, upd = chat(state, msgs, (TOOLS + [MARK_TOOL]) if can_query else [MARK_TOOL])
+            reply, msgs2, upd = chat(state, msgs, (test_tools + [MARK_TOOL]) if can_query else [MARK_TOOL])
         except LLMError as e:
             return {"next": "error", "error": str(e)}
         base = {**upd, "msgs": msgs2, "transcript": transcript + msgs2[len(msgs) - 1:] if not state["msgs"] else transcript + msgs2[-1:]}
@@ -287,7 +291,12 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
                 text = "error: no tool calls left for this hypothesis; call mark_hypothesis now"
             else:
                 used, hyp_used = used + 1, hyp_used + 1
-                ok, res, ms = call_tool(api, c["name"], c["arguments"])
+                if c["name"] in local_tools:
+                    t0 = time.monotonic()
+                    ok, res = local_tools[c["name"]][1](c["arguments"] or {})
+                    ms = int((time.monotonic() - t0) * 1000)
+                else:
+                    ok, res, ms = call_tool(api, c["name"], c["arguments"])
                 tid = f"t{len(log) + 1}"
                 log.append({"id": tid, "name": c["name"], "arguments": {k: v for k, v in (c["arguments"] or {}).items() if k != "until"},
                             "ok": ok, "text": res, "ms": ms, "hypothesis": state["current"]})
@@ -422,8 +431,9 @@ def result_from(s: dict, seconds: float) -> RunResult:
 
 
 def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = True,
-                pc_cap: int = DEFAULT_CAP, extras=None) -> RunResult:
+                pc_cap: int = DEFAULT_CAP, extras=None, local_tools=None) -> RunResult:
     from .tracing import traced
     start = time.monotonic()
-    s = build_graph(api, traced(llm), budget, alert, f4=f4, pc_cap=pc_cap, extras=extras).invoke({}, {"recursion_limit": RECURSION_LIMIT})
+    s = build_graph(api, traced(llm), budget, alert, f4=f4, pc_cap=pc_cap, extras=extras,
+                    local_tools=local_tools).invoke({}, {"recursion_limit": RECURSION_LIMIT})
     return result_from(s, round(time.monotonic() - start, 2))

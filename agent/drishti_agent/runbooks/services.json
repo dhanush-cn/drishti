@@ -1,0 +1,18 @@
+{
+  "_source": "Roles paraphrased from https://opentelemetry.io/docs/demo/services/ and call relations from the service diagram at https://opentelemetry.io/docs/demo/architecture/ (read 20 Nov 2026). Only the services the query API lists in the minimal demo (no Kafka consumers, no AI assistant); the test harness's own services are hidden from the agent and left out. Nothing here comes from the scenario catalog.",
+  "services": {
+    "ad":              {"role": "serves short text ads for the page a user is viewing", "calls": [], "called_by": ["frontend"]},
+    "cart":            {"role": "stores and returns each user's shopping cart, kept in a key-value store", "calls": ["valkey-cart (key-value store)"], "called_by": ["checkout", "frontend"]},
+    "checkout":        {"role": "turns a cart into an order: reads the cart, converts prices, charges the payment, arranges shipping and sends the confirmation email", "calls": ["cart", "currency", "payment", "email", "product-catalog", "shipping"], "called_by": ["frontend"]},
+    "currency":        {"role": "converts money amounts between currencies; the busiest service by request rate", "calls": [], "called_by": ["checkout", "frontend"]},
+    "email":           {"role": "sends order confirmation emails (a mock)", "calls": [], "called_by": ["checkout"]},
+    "frontend":        {"role": "serves the web store's pages and its API", "calls": ["ad", "cart", "currency", "checkout", "product-catalog", "recommendation", "shipping"], "called_by": ["frontend-proxy"]},
+    "frontend-proxy":  {"role": "reverse proxy in front of the web store: routes requests to the frontend and the image provider", "calls": ["frontend", "image-provider"], "called_by": ["users and test traffic (external)"]},
+    "image-provider":  {"role": "serves the product images", "calls": [], "called_by": ["frontend-proxy"]},
+    "payment":         {"role": "charges a card for an order (a mock) and returns a transaction id", "calls": [], "called_by": ["checkout"]},
+    "product-catalog": {"role": "lists, searches and returns products from its data store", "calls": ["its database"], "called_by": ["checkout", "frontend", "recommendation"]},
+    "quote":           {"role": "computes a shipping cost from the number of items", "calls": [], "called_by": ["shipping"]},
+    "recommendation":  {"role": "suggests other products based on what is in the cart", "calls": ["product-catalog"], "called_by": ["frontend"]},
+    "shipping":        {"role": "estimates shipping costs and ships orders (a mock)", "calls": ["quote"], "called_by": ["checkout", "frontend"]}
+  }
+}

@@ -171,3 +171,30 @@ Tests (`tests/test_events.py`): the event order of a run; each event carries onl
 and finished runs. Tracing goes to a local stand-in for the LangSmith API, and the test counts the `llm` runs named after
 the model (3). The first version of that test passed without the wrapper, because node traces carry the same words;
 it now fails without it. LangSmith caches environment lookups, so the test clears them before and after.
+
+## 5. Runbooks (patch 63)
+
+`drishti_agent/runbook_tools.py`, data in `drishti_agent/runbooks/`.
+
+- **Facts:** `services.json`, each demo service's role and call relations, paraphrased from the demo's public service
+  page and architecture diagram (sources in the file). The two pages disagree in places (a service's language; whether
+  the catalog reads a file or a database), so the facts stop at roles and relations.
+- **One template.** Every service's runbook is rendered from the same template (`rendered/*.md`, committed and checked
+  against the template): its relations, then the same checks for every fault type (error, latency, CPU, memory,
+  traffic) and how to tell cause from victim. No service gets a failure mode of its own. The runbooks were written
+  knowing the scenarios; a uniform template is how they can't become an answer key. Tests check the headings are
+  identical, that with placeholder relations every service renders to one of two texts (calls others or not), that the
+  per-service facts carry no fault vocabulary, and that no word of the fault injection appears anywhere.
+- **Symptoms guide:** `symptoms.md`, general operations knowledge, one section per symptom (connection refused,
+  timeouts, steady memory climb vs a flat level, traffic surge, …). Also written knowing the scenarios: the Week 7
+  no-runbooks run measures what the runbooks are worth.
+- **Tools** (graph test step, counted against the tool budget, never evidence for the judge): `runbook(service)`, a
+  plain lookup, and `search_runbooks(query)`, Postgres full-text search (`websearch_to_tsquery`, ranked by
+  `ts_rank_cd`, falling back to OR-ed words). Hypothesize also sees the relations line of each changed candidate.
+- **Recall@3**, on `queries.json` (30 symptom queries with the sections that answer them, written before any agent run):
+  - first measurement, every section indexed: **23/30**. The misses had one cause: a service's per-fault sections are
+    the same template text for every service, and 13 near-copies filled the top 3 of most symptom queries;
+  - index changed to the symptoms guide and each service's relations section (the per-fault text stays one
+    `runbook(service)` away), query set unchanged: **30/30**. Embeddings aren't needed for this corpus.
+- Runner: `--runbooks-postgres URL` turns runbooks on (the index is rebuilt from the files at start); without it, the
+  no-runbooks variant.
