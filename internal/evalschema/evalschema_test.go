@@ -47,7 +47,7 @@ func TestTransform_RenamesAndDropsEveryTTL(t *testing.T) {
 // dropped on insert by drishti.logs (TTL 7 days on received_at) and kept by
 // the eval schema.
 func TestEvalSchema_KeepsRowsAProductionTTLWouldDropOnInsert(t *testing.T) {
-	s := chtest.New(t, "001_logs.sql", "003_metrics.sql")
+	s := chtest.NewProduction(t, "001_logs.sql", "003_metrics.sql")
 	eval := s.DB + "_eval"
 	s.Exec("CREATE DATABASE " + eval)
 	t.Cleanup(func() { s.Exec("DROP DATABASE IF EXISTS " + eval) })

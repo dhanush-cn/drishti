@@ -5,6 +5,14 @@
 //
 // Each test gets its own database, created from the repo's schema files with
 // "drishti." renamed, and dropped at the end.
+//
+// New removes the tables' TTL clauses, as the eval database does
+// (internal/evalschema). Test fixtures are pinned to fixed dates so their
+// results are deterministic, and ClickHouse drops rows whose TTL has already
+// expired on insert: with the production 7-day TTL on received_at, a fixture
+// dated 3 Nov stored nothing from 10 Nov on, and every query test failed
+// against a real server (found 20 Nov). Retention is not what these tests
+// check; NewProduction keeps the TTL for the test that does.
 package chtest
 
 import (
@@ -32,8 +40,25 @@ var seq atomic.Int64
 
 // New skips the test unless DRISHTI_TEST_CLICKHOUSE_URL is set, then creates
 // a fresh database and applies the given schema files (names under
-// clickhouse/schema/) into it.
+// clickhouse/schema/) into it, without their TTL clauses.
 func New(t testing.TB, schemas ...string) *Server {
+	t.Helper()
+	return create(t, true, schemas)
+}
+
+// NewProduction is New with the schema files exactly as production has them,
+// TTL included.
+func NewProduction(t testing.TB, schemas ...string) *Server {
+	t.Helper()
+	return create(t, false, schemas)
+}
+
+// ttlLine matches a table-level TTL clause; in these schema files each is one
+// line (internal/evalschema relies on the same, and its test checks it). The
+// regexp is repeated here because evalschema's own tests import chtest.
+var ttlLine = regexp.MustCompile(`(?m)^[ \t]*TTL\b.*\n?`)
+
+func create(t testing.TB, noTTL bool, schemas []string) *Server {
 	t.Helper()
 	u := os.Getenv("DRISHTI_TEST_CLICKHOUSE_URL")
 	if u == "" {
@@ -48,7 +73,11 @@ func New(t testing.TB, schemas ...string) *Server {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, st := range Statements(strings.ReplaceAll(string(b), "drishti.", s.DB+".")) {
+		sql := strings.ReplaceAll(string(b), "drishti.", s.DB+".")
+		if noTTL {
+			sql = ttlLine.ReplaceAllString(sql, "")
+		}
+		for _, st := range Statements(sql) {
 			s.Exec(st)
 		}
 	}
