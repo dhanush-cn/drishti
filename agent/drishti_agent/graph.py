@@ -28,6 +28,7 @@ import time
 from typing import Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from .agent import triage
 from .api import TOOLS, QueryAPI, call_tool
@@ -74,6 +75,10 @@ class State(TypedDict, total=False):
     valid: bool
     budget_exhausted: bool
     error: Optional[str]
+    proposal: Optional[dict]        # remediation (patch 65): the allowlisted action proposed, if any
+    approval: Optional[dict]        # the human's decision: approve, by, at
+    action: Optional[dict]          # what the executor did
+    recovery: Optional[dict]        # what verify measured
 
 
 def briefing(until: str, alert: Optional[dict]) -> str:
@@ -138,12 +143,15 @@ def _fault(x) -> str:
 
 def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = True,
                 pc_cap: int = DEFAULT_CAP, extras: Optional[list[Callable[[dict], str]]] = None, checkpointer=None,
-                after_node: Optional[Callable[[str], None]] = None, local_tools: Optional[dict] = None):
+                after_node: Optional[Callable[[str], None]] = None, local_tools: Optional[dict] = None,
+                remediation=None, thread_id: str = ""):
     """One investigation. api, llm, alert and the switches are fixed for its lifetime (closed over); everything
     that changes between steps is in State. `extras` add context for hypothesize (runbooks, memory; patches 63-64).
     `after_node(name)` runs after a node computes and before its result is saved (durable.py's crash point).
     `local_tools` (name -> (schema, function(arguments) -> (ok, text))) are offered in tests next to the query tools,
-    counted against the same budget, and never evidence for the judge (runbooks, patch 63)."""
+    counted against the same budget, and never evidence for the judge (runbooks, patch 63).
+    `remediation` (remediate.Remediation, live only) adds propose -> approve (a human, via interrupt) -> execute ->
+    verify after a report; without it a report ends the run, as in evals. Needs a checkpointer to wait for approval."""
     extras = extras or []
     local_tools = local_tools or {}
     test_tools = TOOLS + [schema for schema, _ in local_tools.values()]
@@ -386,6 +394,30 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
                       summary=f"unsure: {why}")
         return {"done": True, "diagnosis": d.model_dump(mode="json"), "valid": True}
 
+    def propose_node(state: State) -> dict:
+        from .remediate import propose
+        p = propose(state["diagnosis"])
+        return {"proposal": p, "verdicts": state["verdicts"] + [f"proposed: {p['action']}({p['service']})" if p else "no action proposed"]}
+
+    def approve_node(state: State) -> dict:
+        # Pauses the run until a human answers (durable.decide); the state waits in Postgres meanwhile.
+        decision = interrupt({"proposal": state["proposal"], "diagnosis": state["diagnosis"]})
+        d = decision if isinstance(decision, dict) else {}
+        approval = {"approve": bool(d.get("approve")), "by": str(d.get("by") or ""),
+                    "at": d.get("at") or iso_now()}
+        return {"approval": approval, "verdicts": state["verdicts"] + [
+            f"{'approved' if approval['approve'] else 'rejected'} by {approval['by'] or 'nobody'}"]}
+
+    def execute_node(state: State) -> dict:
+        from .remediate import execute
+        act = execute(state["proposal"], state["approval"], remediation.flags, thread_id)
+        return {"action": act}
+
+    def verify_node(state: State) -> dict:
+        if not (state.get("action") or {}).get("ok"):
+            return {"recovery": {"recovered": None, "why": "nothing was executed"}}
+        return {"recovery": remediation.verifier.verify(state["pc"], state["proposal"]["service"])}
+
     def error_node(state: State) -> dict:
         d = Diagnosis.unsure(f"model error: {state['error']}", ruled_out=_ruled_out(state["hypotheses"]))
         return {"done": True, "diagnosis": d.model_dump(mode="json"), "valid": False}
@@ -404,7 +436,8 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
     g = StateGraph(State)
     for name, fn in (("triage", triage_node), ("page_check", page_check_node), ("hypothesize", hypothesize_node),
                      ("test", test_model_node), ("tools", test_tools_node), ("judge", judge_node), ("report", report_node),
-                     ("unsure", unsure_node), ("error", error_node)):
+                     ("unsure", unsure_node), ("error", error_node), ("propose", propose_node), ("approve", approve_node),
+                     ("execute", execute_node), ("verify", verify_node)):
         g.add_node(name, hooked(name, fn))
     g.add_edge(START, "triage")
     g.add_edge("triage", "page_check")
@@ -413,15 +446,30 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
     g.add_conditional_edges("test", route, ["test", "tools", "judge", "unsure", "error"])
     g.add_edge("tools", "test")
     g.add_conditional_edges("judge", route, ["test", "hypothesize", "report", "unsure"])
-    for n in ("report", "unsure", "error"):
+    if remediation is None:
+        g.add_edge("report", END)
+    else:
+        g.add_edge("report", "propose")
+        g.add_conditional_edges("propose", lambda s: "approve" if s.get("proposal") else END, ["approve", END])
+        g.add_conditional_edges("approve", lambda s: "execute" if (s.get("approval") or {}).get("approve") else END, ["execute", END])
+        g.add_edge("execute", "verify")
+        g.add_edge("verify", END)
+    for n in ("unsure", "error"):
         g.add_edge(n, END)
     return g.compile(checkpointer=checkpointer)
+
+
+def iso_now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def result_from(s: dict, seconds: float) -> RunResult:
     """A RunResult from a finished graph state (the same shape the harness scores for v0)."""
     graph_info = {"role": "graph", "content": json.dumps({"hypotheses": s.get("hypotheses"), "verdicts": s.get("verdicts"),
-                                                          "refusals": s.get("refusals"), "pagecheck": s.get("pc")}, default=str)}
+                                                          "refusals": s.get("refusals"), "pagecheck": s.get("pc"),
+                                                          "proposal": s.get("proposal"), "approval": s.get("approval"),
+                                                          "action": s.get("action"), "recovery": s.get("recovery")}, default=str)}
     return RunResult(system="graph", diagnosis=Diagnosis.model_validate(s["diagnosis"]), valid_answer=s["valid"],
                      budget_exhausted=s.get("budget_exhausted", False),
                      tool_calls=[ToolRecord(name=e["name"], arguments=e["arguments"], ok=e["ok"], chars=len(e["text"]), ms=e["ms"])

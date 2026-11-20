@@ -82,6 +82,14 @@ def investigate(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, 
     return graph.result_from(final, round(time.monotonic() - start, 2))
 
 
+def decide(api: QueryAPI, llm, checkpointer, thread_id: str, approve: bool, by: str, remediation, **kw):
+    """A human's decision on a proposed fix: resumes the paused investigation (execute and verify, or close)."""
+    if not str(by or "").strip():
+        raise ValueError("a decision needs who made it")
+    return stream(api, llm, checkpointer, thread_id=thread_id, remediation=remediation,
+                  resume={"approve": bool(approve), "by": by.strip()}, **kw)
+
+
 def _summary(text: str, n: int = 160) -> str:
     t = " ".join((text or "").split())
     return t if len(t) <= n else t[:n] + "…"
@@ -117,18 +125,29 @@ def events_for(node: str, update: dict, state: dict) -> list[dict]:
         out.append({"type": "judge", "verdict": (update.get("verdicts") or [""])[-1], "next": update.get("next")})
     elif node in ("report", "unsure", "error"):
         out.append({"type": "diagnosis", "diagnosis": update.get("diagnosis"), "valid": update.get("valid")})
+    elif node == "propose":
+        out.append({"type": "proposal", "proposal": update.get("proposal")})
+    elif node == "approve":
+        out.append({"type": "decision", "approval": update.get("approval")})
+    elif node == "execute":
+        out.append({"type": "action", "action": update.get("action")})
+    elif node == "verify":
+        out.append({"type": "recovery", "recovery": update.get("recovery")})
     return out
 
 
 def stream(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, thread_id: Optional[str] = None,
            budget: int = graph.DEFAULT_BUDGET, f4: bool = True, pc_cap: int = graph.DEFAULT_CAP, extras=None,
-           local_tools=None, crash: Optional[str] = None, crash_mode: str = "exit"):
+           local_tools=None, crash: Optional[str] = None, crash_mode: str = "exit", remediation=None,
+           resume: Optional[dict] = None):
     """Run, resume, or replay a finished investigation, yielding events as steps finish. The last event is
-    {"type": "end", "state": <final state>}. A finished investigation yields only its diagnosis and end."""
+    {"type": "end", "state": <state>}. A finished investigation yields only its diagnosis and end. With remediation,
+    a run pauses at the approval: it yields "awaiting_approval" and ends; stream again with resume={"approve": bool,
+    "by": "<who>"} (decide()) to continue."""
     tid = thread_id or investigation_id(alert, api.until)
     hook = crash_point(crash if crash is not None else os.environ.get(CRASH_ENV), crash_mode)
     g = graph.build_graph(api, traced(llm), budget, alert, f4=f4, pc_cap=pc_cap, extras=extras, checkpointer=checkpointer,
-                          after_node=hook, local_tools=local_tools)
+                          after_node=hook, local_tools=local_tools, remediation=remediation, thread_id=tid)
     config = {"configurable": {"thread_id": tid}, "recursion_limit": graph.RECURSION_LIMIT}
     yield {"type": "start", "thread_id": tid, "alert": alert, "until": api.until}
     snap = g.get_state(config)
@@ -137,10 +156,21 @@ def stream(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, th
         yield {"type": "end", "state": dict(snap.values)}
         return
     state: dict = dict(snap.values) if snap.values else {}
+    waiting = [i for t in (snap.tasks or ()) for i in (t.interrupts or ())]
+    if waiting and resume is None:              # paused at the approval: say so again, change nothing
+        yield {"type": "awaiting_approval", **(waiting[0].value or {})}
+        yield {"type": "end", "state": state}
+        return
     if state:
         yield {"type": "resumed", "next": list(snap.next)}
-    for chunk in g.stream(None if state else {}, config, stream_mode="updates", durability=DURABILITY):
+    from langgraph.types import Command
+    start_input = Command(resume=resume) if (waiting and resume is not None) else (None if state else {})
+    for chunk in g.stream(start_input, config, stream_mode="updates", durability=DURABILITY):
         for node, update in chunk.items():
+            if node == "__interrupt__":
+                for intr in update:
+                    yield {"type": "awaiting_approval", **(intr.value or {}), "node": node}
+                continue
             if not isinstance(update, dict):
                 continue
             for ev in events_for(node, update, state):

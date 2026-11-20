@@ -215,3 +215,34 @@ it now fails without it. LangSmith caches environment lookups, so the test clear
   signature at each trigger and the labelled root cause, confirmed, with no model calls. The runner's
   `--memory-postgres URL --memory-from <recordings>` reads them and refuses the recording being scored. Scored incidents
   then recur incident types already in memory, memory's best case: on capture C the headline is without memory.
+
+## 7. Human-approved remediation (patch 65)
+
+`drishti_agent/remediate.py`; graph nodes after `report`, only when the graph is built with a `Remediation` (live).
+Evals don't change: a report still ends the run there.
+
+```
+report → propose (code) → approve (a human: LangGraph interrupt) → execute (code) → verify (code) → end
+            └ unsure: nothing proposed        └ rejected: closed, nothing touched
+```
+
+- **One allowlisted action, `rollback_config(service)`.** In the demo every fault is a config flag, so rolling back the
+  diagnosed service's config is the fix that works; in a real system it would be a deploy or config rollback API.
+  Restart is left out: restarting a leaking service hides the leak and changes the demo for later scenarios.
+- **propose** is a lookup (diagnosis → action), not a model call.
+- **approve** pauses the run with LangGraph's `interrupt`; the state waits in Postgres until `durable.decide(thread,
+  approve, by)` resumes it. A decision without who made it is refused. Asking about a waiting run changes nothing.
+- **execute** refuses anything outside the allowlist and anything without an approval record. The executor alone maps a
+  service to the flags it owns (from the eval labels) and turns off those that are on, through the demo's flag API (as
+  `scripts/demo-flag.py`). The agent never sees a flag name. Turning a flag off twice leaves it off: a crash during
+  execute resumes with no second change (tested). A wrong diagnosis rolls back the wrong service, nothing relevant
+  changes, and verify reports it: an honest failure, left to the human.
+- **verify** polls `/v1/timeseries` live every 30 s for the diagnosed service's changed signal, against the reference
+  level page_check measured its onset from (now kept per candidate), with the same threshold: recovered after 2 minutes
+  in a row back within it; memory recovers when the climb stops (slope below 0.5 MiB/min). It gives up after 10 minutes,
+  and says so when there's no measured signal to judge by.
+
+Tests (`tests/test_remediate.py`): the executor's guards and idempotency on an in-memory flag API; the verifier against a
+local query API that recovers, relapses or never recovers; the full approve and reject flows; unsure proposes nothing;
+a crash during execute. Eight breaks (no approval check, no allowlist, every flag rolled back, writing when nothing
+changed, a relapse not resetting the count, one good check enough, a rejection executing, no pause) each turn a test red.

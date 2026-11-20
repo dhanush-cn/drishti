@@ -246,6 +246,7 @@ class Candidate:
     signal: Optional[str] = None        # the signal its onset was measured on
     onset: Optional[str] = None
     trend: Optional[str] = None
+    reference: Optional[float] = None   # the quiet level the onset was measured against (recovery is judged against it)
     note: str = ""
 
 
@@ -452,7 +453,7 @@ def page_check(api: QueryAPI, alert: Optional[dict] = None, cap: int = DEFAULT_C
             continue
         pts = data.get("points") or []
         o = onset_of(pts, c.signal)
-        c.onset, c.trend = o.at, trend_of(pts, c.signal)
+        c.onset, c.trend, c.reference = o.at, trend_of(pts, c.signal), o.reference
         if not o.at:
             c.note = (c.note + "; " if c.note else "") + o.how
 
