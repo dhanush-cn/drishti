@@ -198,3 +198,20 @@ it now fails without it. LangSmith caches environment lookups, so the test clear
     `runbook(service)` away), query set unchanged: **30/30**. Embeddings aren't needed for this corpus.
 - Runner: `--runbooks-postgres URL` turns runbooks on (the index is rebuilt from the files at start); without it, the
   no-runbooks variant.
+
+## 6. Incident memory (patch 64)
+
+`drishti_agent/memory.py`, table `incidents` in the agent's Postgres.
+
+- **Signature (code):** the page (service and rule), each candidate's own changes by kind (error, latency, traffic, CPU,
+  memory) and the victims (candidates with failing or slow calls), from page_check's table. Similarity is Jaccard over
+  these sets; the top 2 at 0.5 or more go into hypothesize with their outcome. No embeddings: the signature is already
+  structured.
+- **Outcomes:** `confirmed`, `wrong` (kept and shown as "X was blamed and it was WRONG; it was Y"), and `unconfirmed`,
+  never retrieved. `resolve()` records what turned out to be true (a verified recovery, or a human's verdict).
+- **Sources** keep memories apart: `live` for the running system, a recording's name for eval seeds.
+- **Evals:** memory is read-only during a run, so no scenario learns from another and order can't matter (tested).
+  `python -m drishti_agent.memory seed` writes postmortems from a recording's labels: for each scored scenario, the
+  signature at each trigger and the labelled root cause, confirmed, with no model calls. The runner's
+  `--memory-postgres URL --memory-from <recordings>` reads them and refuses the recording being scored. Scored incidents
+  then recur incident types already in memory, memory's best case: on capture C the headline is without memory.
