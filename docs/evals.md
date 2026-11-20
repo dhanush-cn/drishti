@@ -363,3 +363,49 @@ Read with care: 10 scenarios, one recording, a 7B model. These are tuning number
 removes only the onset check (the component with a record of harm and no benefit) and keeps the 5-minute
 paged comparison and the briefing rule. Decided before running it: one hosted check of patch 52 on
 capture 2, then freeze those prompts **whatever they score**, then capture B. Prompts `40abe73ebe28`.
+
+**Frozen prompts on capture 2** (patch 52, prompts `40abe73ebe28`, 1 run): agent 8/10 agent-only, 5/10
+end-to-end; baseline 6/10 and 7/10; floor 4/10 and 7/10. Frozen as decided (`agent/FROZEN.json`).
+
+## 6. Held-out result: capture B (frozen prompts)
+
+Gemini 3.5 Flash-Lite, prompts `40abe73ebe28` (checked against `agent/FROZEN.json` by `--held-out`),
+code `26c1860`, 3 runs on 19–20 Nov. Nothing was tuned on capture B. Two changes landed between the freeze
+and the run, neither touching prompts: the loader's batch cap (patch 53: the load stopped at Kafka's
+1 MiB limit) and the leak check's rule for collector mentions (patch 54, decided before any capture B score).
+
+- Load: 267,636 log rows, 1,289,933 metric points, 1,232 anomaly events, matching the consumers' counts.
+- Leak check: 13 scenarios, 754 responses, 31,364 masked lines, **0 leaks**.
+- Fault gate: **9 of 13 scored.** Not scored: cartFailure (1 error), paymentFailure (0 payment errors, as in
+  the Week 4 live run), intlShippingSlowdown (p95 5.68 vs 5.37 ms), loadGeneratorFloodHomepage (calls ×1.8,
+  need ×2).
+
+Counts over 9 scenarios × 3 runs:
+
+| | agent-only (held out) | end-to-end (not fully held out) |
+|---|---|---|
+| agent, top-1 | **22/27** (8, 7, 7) | 10/27 (3, 4, 3) |
+| agent, top-3 | 24/27 | 15/27 |
+| agent, confidently wrong | 4/27 | 8/27 |
+| agent, unsure | 1/27 | 9/27 |
+| baseline (no tools), top-1 | 19/27 (7, 6, 6) | 17/27 (5, 7, 5) |
+| floor (deterministic), top-1 | 7/9 per run | 4/9 per run |
+
+What it says:
+- **Agent-only:** the tool loop is above the one-prompt baseline (22 vs 19) and level with the floor (22
+  against 21 over three runs). The floor is much stronger on capture B (7/9) than on capture 2 (4/10): here
+  the top changed service usually is the culprit, which leaves the agent little room. Same order as capture 2
+  (agent > baseline > floor there, by more).
+- **End-to-end:** the agent is below both the baseline (10 vs 17) and repeating the alert (≈12), with 8
+  confidently wrong and 9 unsure answers. The same weakness as on capture 2: at the first alert the new fault
+  is seconds old, and the agent either picks a louder neighbour (payment for recommendationCacheFailure in
+  2 of 3 runs, ad for productCatalogLockContention in 2 of 3) or withdraws to unsure. The one-prompt
+  baseline, which reads the alert and one snapshot, does better. This column is not fully held out (the
+  detector's clumping fix was tuned on capture B), which if anything flatters it.
+- Repeats at temperature 0 differ: per-run agent top-1 7–8 (agent-only) and 3–4 (end-to-end).
+- Small numbers: 9 scenarios on one recording. One scenario is 3 of 27.
+
+**Conclusion for Week 5.** With a capable model, an agent that investigates with tools explains an incident
+better than one prompt over a snapshot when it starts after the fault has been running a few minutes. At
+the first alert it does not yet beat the alert itself or the snapshot. The Week 6 design work (an explicit
+"confirm or reassign the alert's service" step rather than a free search) starts from here.
