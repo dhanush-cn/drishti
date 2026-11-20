@@ -23,10 +23,12 @@ import sys
 import time
 from pathlib import Path
 
-from .. import agent, baseline
+from .. import agent, baseline, graph
 from ..api import QueryAPI
 from ..llm import from_args
+from ..pagecheck import DEFAULT_CAP
 from ..prompts import PROMPT_VERSION
+from ..prompts_graph import GRAPH_PROMPT_VERSION
 from . import report
 from .labels import LABELS
 from .scenarios import gate, iso, load_timeline, set_triggers
@@ -55,7 +57,9 @@ def main(argv=None) -> int:
     ap.add_argument("--api-key-env", default="")
     ap.add_argument("--price-in", type=float, default=0.0, help="USD per million input tokens (0 = not priced)")
     ap.add_argument("--price-out", type=float, default=0.0, help="USD per million output tokens")
-    ap.add_argument("--systems", default="agent,baseline")
+    ap.add_argument("--systems", default="agent,baseline", help="any of agent (v0), graph (Week 6), baseline")
+    ap.add_argument("--no-f4", action="store_true", help="graph: switch rule F4 off (Week 7 comparison)")
+    ap.add_argument("--pagecheck-cap", type=int, default=DEFAULT_CAP, help="graph: query calls page_check may make")
     ap.add_argument("--columns", default="agent-only,end-to-end")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--budget", type=int, default=agent.DEFAULT_BUDGET)
@@ -77,6 +81,9 @@ def main(argv=None) -> int:
             print(f"refusing --held-out: prompts changed since the freeze ({frozen['prompt_version']} -> {PROMPT_VERSION})", file=sys.stderr)
             return 2
 
+    if a.provider == "heuristic" and "graph" in a.systems.split(","):
+        print("the heuristic floor only answers the v0 loop's first message; run it with --systems agent", file=sys.stderr)
+        return 2
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     scenarios, base = load_timeline(a.timeline)
@@ -86,6 +93,7 @@ def main(argv=None) -> int:
     llm = from_args(a.provider, a.model, a.base_url, a.api_key_env or ("ANTHROPIC_API_KEY" if a.provider == "anthropic" else ""), a.temperature,
                     rpm=a.rpm, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens)
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,
+            "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": not a.no_f4, "pagecheck_cap": a.pagecheck_cap,
             "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature, "rpm": a.rpm, "reasoning_effort": a.reasoning_effort, "max_tokens": a.max_tokens,
             "price_in": a.price_in, "price_out": a.price_out, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     print(json.dumps(meta))
@@ -120,7 +128,12 @@ def main(argv=None) -> int:
                             api = QueryAPI(a.api, iso(until))
                             # End-to-end runs start from the alert that paged; agent-only runs from a report with no alert.
                             alert = sc.trigger_alert if col == "end-to-end" else None
-                            r = agent.investigate(api, llm, a.budget, alert) if sysname == "agent" else baseline.diagnose(api, llm, alert)
+                            if sysname == "agent":
+                                r = agent.investigate(api, llm, a.budget, alert)
+                            elif sysname == "graph":
+                                r = graph.investigate(api, llm, a.budget, alert, f4=not a.no_f4, pc_cap=a.pagecheck_cap)
+                            else:
+                                r = baseline.diagnose(api, llm, alert)
                             s = score(sc.flag, r)
                             row.update(missed=False, score=s.to_json(), usd=round(cost(r, a.price_in, a.price_out), 6),
                                        result=r.model_dump(mode="json"))

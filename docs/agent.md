@@ -87,3 +87,44 @@ no model calls. Per scored scenario, from its trigger alert only: is the labelle
 or not, with the cap and with a full walk), would F4 accept it, would F4 refuse each wrong service the Week 5
 agent named, how many query calls the walk used, and how far each onset is from the flag-on time. Its first runs on
 capture 2 and capture B are reviewed before the hypothesis loop (patch 59) is built on the rule.
+
+## 2. The hypothesis graph (patch 60)
+
+`drishti_agent/graph.py`, system `graph` in the eval runner (`--systems graph`). The Week 5 loop (`agent.py`, system
+`agent`) is unchanged and stays a control. The graph has its own prompts (`prompts_graph.py`, `GRAPH_PROMPT_VERSION`):
+the Week 5 briefing anchored the root cause on the alert's time, and F4 anchors on the paging service's onset.
+
+```
+triage (code) → page_check (code) → hypothesize (model) → test: model ⇄ tools → judge (code)
+                                          ↑                                        │
+                                          └──── next hypothesis / new round ───────┘
+                                                  judge → report | unsure
+```
+
+- **hypothesize:** the model sees the briefing, triage, the candidate table and the hypotheses so far, and calls
+  `submit_hypotheses` with up to 3 untested ones (service, fault type, prior, why). Services already tested aren't
+  tested again.
+- **test:** one hypothesis at a time, highest prior first. The model calls the query tools (at most 4 per hypothesis)
+  and ends with `mark_hypothesis`: supported, refuted or inconclusive, a confidence, and the ids of the results that
+  show it (`[t3]`, or `candidates` for its row in the table). A verdict sent in the same turn as tool calls is
+  refused, as Week 5 refuses a batched answer.
+- **judge (code):**
+  1. *Grounding:* a cited result counts only if it is **about** the hypothesis's service: a per-service tool whose
+     `service` argument is it, its own row in the overview (a line starting with it) or an alert whose `service` is
+     it, or its candidate row when that shows an own change. A failed query counts for nothing. An overview mentions
+     every service, so "the result mentions it" would accept anything.
+  2. Supported, grounded, confidence ≥ 0.7, and (end-to-end, unless switched off with `--no-f4`) F4 → **report**.
+  3. F4 refusal: the hypothesis is marked refused with the reason, which the model sees in the next round. A second
+     refusal ends the run as **unsure**, listing what was refused. The judge never substitutes an answer.
+  4. Otherwise the next open hypothesis, or a new round (at most 3), or unsure when the budget is out.
+- **Budgets:** 12 model tool calls in total (as v0), 4 per hypothesis, 3 rounds, 15 model calls (one run of about 26
+  investigations then stays inside a 500-request day), and page_check's own query cap. Running out is "unsure, here's
+  what I ruled out".
+- **The report** is built by code from the accepted hypothesis (no extra model call): its service and fault type, the
+  cited results as evidence, everything refuted, refused or inconclusive as `ruled_out`, and `ranked_services` for
+  top-3. An unsure report still ranks the open and weakly supported hypotheses.
+
+Tests: `tests/test_graph.py`, a scripted model over a fake call graph. Every judge edge, grounding (other service,
+mention inside another row, candidate row without an own change, unknown id, failed query), F4 (refused and continued,
+refused twice, switched off, agent-only, no-edge service accepted on its own signal) and every budget. 16 breaks of the
+graph's rules each turn a test red.
