@@ -423,7 +423,7 @@ rows `graph:<label>` / `agent:<label>`):
 | full graph | `--systems graph --runbooks-postgres URL --memory-postgres URL --memory-from <other recordings>` |
 | no runbooks | the same without `--runbooks-postgres`, `--label no-rb` |
 | no memory | the same without `--memory-*`, `--label no-mem` |
-| no F4 | `--no-f4 --label no-f4` |
+| F4 on (off by default since patch 69, docs/agent.md section 9) | `--f4 --label f4` |
 | v0 | `--systems agent` |
 | v0 at the graph's query budget | `--systems agent --budget 20 --label b20` (separates the design's effect from more lookups) |
 | baseline, floor | as Week 5 |

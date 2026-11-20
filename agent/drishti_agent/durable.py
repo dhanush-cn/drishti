@@ -70,7 +70,7 @@ def postgres_saver(url: str):
 
 
 def investigate(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, thread_id: Optional[str] = None,
-                budget: int = graph.DEFAULT_BUDGET, f4: bool = True, pc_cap: int = graph.DEFAULT_CAP, extras=None,
+                budget: int = graph.DEFAULT_BUDGET, f4: bool = False, pc_cap: int = graph.DEFAULT_CAP, extras=None,
                 local_tools=None, crash: Optional[str] = None, crash_mode: str = "exit") -> RunResult:
     """Run, resume, or return a finished investigation, by thread id."""
     start = time.monotonic()
@@ -137,7 +137,7 @@ def events_for(node: str, update: dict, state: dict) -> list[dict]:
 
 
 def stream(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, thread_id: Optional[str] = None,
-           budget: int = graph.DEFAULT_BUDGET, f4: bool = True, pc_cap: int = graph.DEFAULT_CAP, extras=None,
+           budget: int = graph.DEFAULT_BUDGET, f4: bool = False, pc_cap: int = graph.DEFAULT_CAP, extras=None,
            local_tools=None, crash: Optional[str] = None, crash_mode: str = "exit", remediation=None,
            resume: Optional[dict] = None):
     """Run, resume, or replay a finished investigation, yielding events as steps finish. The last event is

@@ -27,7 +27,8 @@ from .api import APIError, QueryAPI
 from .prompts import TRIAGE_BASELINE, TRIAGE_BASELINE_PAGED, TRIAGE_WINDOW
 
 MAX_DEPTH = 3                    # callee hops followed from a start service
-DEFAULT_CAP = 8                  # query calls page_check may make (design F5; measured by rulecheck)
+DEFAULT_CAP = 12                 # query calls page_check may make (design F5). Set from the ceiling check (20 Nov):
+                                 # the largest walk needed 11 (capture 2) and 7 (capture B); 8 cut one walk short.
 ONSET_WINDOW = "30m"             # how far back an onset is searched
 STEP = "30s"
 EARLIER_INCIDENT = timedelta(minutes=5)   # F4; chosen with the 7-minute scenario cadence in view (design section 4)

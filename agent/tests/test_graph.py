@@ -148,12 +148,12 @@ class Grounding(unittest.TestCase):
 
 
 class F4Judge(unittest.TestCase):
-    """F4 in the judge: end-to-end only, refused once = sent back, twice = unsure; switchable."""
+    """F4 in the judge: off by default (patch 69); switched on, end-to-end only, refused once = sent back, twice = unsure."""
 
     def test_earlier_incident_is_refused_and_the_run_goes_on(self):
         r, info, llm = run([hyps(("ad", "cpu", 0.7), ("product-catalog", "error", 0.4)),
                             call("c1", "timeseries", service="ad", signal="cpu"), mark("supported", 0.9, ["t1"]),
-                            call("c2", "spans", service="product-catalog"), mark("supported", 0.8, ["t2"])])
+                            call("c2", "spans", service="product-catalog"), mark("supported", 0.8, ["t2"])], f4=True)
         self.assertEqual(r.diagnosis.root_cause_service, "product-catalog")
         self.assertEqual(info["hypotheses"][0]["status"], "refused")
         self.assertIn("earlier incident", info["refusals"][0])
@@ -162,25 +162,27 @@ class F4Judge(unittest.TestCase):
     def test_refused_twice_is_unsure_never_a_guess(self):
         r, info, _ = run([hyps(("ad", "cpu", 0.7), ("checkout", "error", 0.4)),
                           call("c1", "timeseries", service="ad", signal="cpu"), mark("supported", 0.9, ["t1"]),
-                          call("c2", "spans", service="checkout"), mark("supported", 0.9, ["t2"])])
+                          call("c2", "spans", service="checkout"), mark("supported", 0.9, ["t2"])], f4=True)
         self.assertIsNone(r.diagnosis.root_cause_service)
         self.assertEqual(len(info["refusals"]), 2)
         self.assertTrue(any("refused by F4" in x for x in r.diagnosis.ruled_out))
 
-    def test_switched_off_for_the_comparison(self):
-        r, _, _ = run([hyps(("ad", "cpu", 0.7)), call("c1", "timeseries", service="ad", signal="cpu"),
-                       mark("supported", 0.9, ["t1"])], f4=False)
+    def test_off_by_default(self):
+        # ad is an earlier incident by F4's rule; with F4 off (the default since the ceiling check) it is accepted.
+        r, info, _ = run([hyps(("ad", "cpu", 0.7)), call("c1", "timeseries", service="ad", signal="cpu"),
+                          mark("supported", 0.9, ["t1"])])
         self.assertEqual(r.diagnosis.root_cause_service, "ad")
+        self.assertEqual(info["refusals"], [])
 
     def test_agent_only_has_no_f4(self):
         r, _, llm = run([hyps(("ad", "cpu", 0.7)), call("c1", "timeseries", service="ad", signal="cpu"),
-                         mark("supported", 0.9, ["t1"])], alert=None)
+                         mark("supported", 0.9, ["t1"])], alert=None, f4=True)
         self.assertEqual(r.diagnosis.root_cause_service, "ad")
         self.assertIn("no single alert identifies it", llm.sent[0][1][0]["content"])
 
     def test_no_edge_service_is_accepted_on_its_own_signal(self):
         r, _, _ = run([hyps(("email", "memory", 0.6)), call("c1", "timeseries", service="email", signal="memory_mib"),
-                       mark("supported", 0.85, ["t1"], fault_type="memory")])
+                       mark("supported", 0.85, ["t1"], fault_type="memory")], f4=True)
         self.assertEqual((r.diagnosis.root_cause_service, r.diagnosis.fault_type.value), ("email", "memory"))
 
 

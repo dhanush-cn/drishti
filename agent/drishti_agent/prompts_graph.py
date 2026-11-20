@@ -25,8 +25,8 @@ You work in steps, and code does the mechanical parts for you:
   mark_hypothesis. Every tool result is tagged with an id like [t3]; cite the ids of the results that show the
   hypothesis's service ITSELF (its own spans, timeseries, logs, or its row in the overview or alerts). Citations about
   other services don't count.
-- JUDGE (code): accepts a supported hypothesis only if its evidence is grounded and, when you were paged, if the
-  service's own signals changed and it is not an earlier incident.
+- JUDGE (code): accepts a supported hypothesis only if its evidence is grounded (about that service itself) and your
+  confidence is at least 0.7.
 
 How to reason:
 1. The root cause is the service whose OWN behaviour broke: its SERVER spans fail or slow down, its CPU or memory jumps,

@@ -35,7 +35,7 @@ From the paging service (end-to-end), or the top 5 changed services in triage (a
 Own change counts SERVER errors, latency and calls, CPU and memory. Log changes do not: a log spike is also what a
 victim writes when its calls fail.
 
-Every call goes through a counted budget (`DEFAULT_CAP` = 8, design F5) and the walk stops when it runs out.
+Every call goes through a counted budget (`DEFAULT_CAP`, design F5; 8 at first, 12 since the ceiling check, section 9) and the walk stops when it runs out.
 `rulecheck` measures what a full walk needs on the recordings, which is what the cap should be set from.
 
 ### Rules, fixed before any run
@@ -113,7 +113,8 @@ triage (code) → page_check (code) → hypothesize (model) → test: model ⇄ 
      `service` argument is it, its own row in the overview (a line starting with it) or an alert whose `service` is
      it, or its candidate row when that shows an own change. A failed query counts for nothing. An overview mentions
      every service, so "the result mentions it" would accept anything.
-  2. Supported, grounded, confidence ≥ 0.7, and (end-to-end, unless switched off with `--no-f4`) F4 → **report**.
+  2. Supported, grounded, confidence ≥ 0.7 → **report**. (With `--f4`, end-to-end answers must also pass F4: off by
+     default since patch 69, section 9.)
   3. F4 refusal: the hypothesis is marked refused with the reason, which the model sees in the next round. A second
      refusal ends the run as **unsure**, listing what was refused. The judge never substitutes an answer.
   4. Otherwise the next open hypothesis, or a new round (at most 3), or unsure when the budget is out.
@@ -279,3 +280,35 @@ Tests (`tests/test_service.py`, Postgres): start, one run per alert, SSE, decisi
 verified → remembered confirmed; reject; unknown alert; a restart while waiting; a run killed midway resumed at
 startup; the page never uses innerHTML. Five breaks (no atomic claim, no resume at startup, recovery not remembered, a
 run per click, no `by` check) each turn a test red. Go: `/config.json` and the page's link (2 breaks red).
+
+## 9. F4 measured, and switched off by default (patch 69)
+
+The ceiling check (section 1) ran on the laptop on 20 Nov, no model calls, against both recordings' trigger alerts:
+
+| | capture 2 (10 with an alert) | capture B (9) |
+|---|---|---|
+| labelled service in the candidate table | 8 | 8 (by an edge or paged: 6) |
+| F4 accepts the labelled service | **7** | **7** |
+| Week 5 agent's wrong end-to-end answers refused | 1 of 2 | 4 of 8 |
+| refusals by the earlier-incident condition | 0 | 0 |
+| largest walk (query calls) | 11 | 7 |
+
+- **Every refusal of a labelled answer came from "own change required"** (capture 2: paymentUnreachable,
+  productCatalogLockContention, productCatalogFailure; capture B: adFailure, productCatalogFailure). At the first
+  alert, page_check saw no change in the root cause's own signals over its 2-minute window, while the services calling
+  it already failed. paymentUnreachable shows the split: refused on capture 2 (checkout and payment show no own
+  change), accepted on capture B (checkout's own change, onset at flag-on).
+- **The same condition refused the 5 wrong answers F4 caught** (product-catalog for imageSlowLoad, ad for
+  productCatalogLockContention). As many right answers as wrong ones: a wash.
+- **The earlier-incident condition never fired.** It rarely has data at the first alert: a log-spike page's onset is
+  the start of a 5-minute window, and most candidates' onsets aren't measurable yet.
+- **The Week 5 agent's most frequent wrong answer on capture B passes F4 anyway** (payment for the two memory faults:
+  payment's memory really was climbing).
+
+Decision (20 Nov, Dhanush): **F4 off by default**; `--f4` keeps it as a Week 7 variant measured with a model. Not
+re-tuned on these recordings: any version fitted to two recordings already looked at would only fit them. The graph
+keeps the candidate table as context and the grounding check as its judge; the model's prompt no longer describes F4
+(when it is on, a refusal's reason still reaches the model through the hypotheses board). page_check's query cap is
+**12**, set from the largest walk (11); 8 cut one walk short of its onsets.
+
+Also from the check: the labelled service is reached by every agent-only walk (10/10, 9/9).

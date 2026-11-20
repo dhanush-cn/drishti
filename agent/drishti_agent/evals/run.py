@@ -59,12 +59,12 @@ def main(argv=None) -> int:
     ap.add_argument("--price-in", type=float, default=0.0, help="USD per million input tokens (0 = not priced)")
     ap.add_argument("--price-out", type=float, default=0.0, help="USD per million output tokens")
     ap.add_argument("--systems", default="agent,baseline", help="any of agent (v0), graph (Week 6), baseline")
-    ap.add_argument("--no-f4", action="store_true", help="graph: switch rule F4 off (Week 7 comparison)")
+    ap.add_argument("--f4", action="store_true", help="graph: switch rule F4 on (off by default since patch 69; a Week 7 variant)")
     ap.add_argument("--pagecheck-cap", type=int, default=DEFAULT_CAP, help="graph: query calls page_check may make")
     ap.add_argument("--runbooks-postgres", default="", help="graph: runbooks on, searched in this Postgres (absent: the no-runbooks variant)")
     ap.add_argument("--memory-postgres", default="", help="graph: incident memory on, read-only, from this Postgres (absent: no memory)")
     ap.add_argument("--memory-from", default="", help="graph: memory sources to read, comma-separated recording names (never the one scored)")
-    ap.add_argument("--label", default="", help="variant label, e.g. no-rb, no-mem, no-f4, b20: agent and graph rows become system:label")
+    ap.add_argument("--label", default="", help="variant label, e.g. no-rb, no-mem, f4, b20: agent and graph rows become system:label")
     ap.add_argument("--resume", action="store_true", help="keep runs.jsonl, skip finished cells, retry failed ones (a run spread over days)")
     ap.add_argument("--columns", default="agent-only,end-to-end")
     ap.add_argument("--runs", type=int, default=3)
@@ -106,7 +106,7 @@ def main(argv=None) -> int:
     llm = from_args(a.provider, a.model, a.base_url, a.api_key_env or ("ANTHROPIC_API_KEY" if a.provider == "anthropic" else ""), a.temperature,
                     rpm=a.rpm, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens)
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,
-            "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": not a.no_f4, "pagecheck_cap": a.pagecheck_cap,
+            "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": a.f4, "pagecheck_cap": a.pagecheck_cap,
             "runbooks": bool(a.runbooks_postgres), "memory_from": a.memory_from if a.memory_postgres else "", "label": a.label,
             "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature, "rpm": a.rpm, "reasoning_effort": a.reasoning_effort, "max_tokens": a.max_tokens,
             "price_in": a.price_in, "price_out": a.price_out, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
@@ -172,7 +172,7 @@ def main(argv=None) -> int:
                             if sysname == "agent":
                                 r = agent.investigate(api, llm, a.budget, alert)
                             elif sysname == "graph":
-                                r = graph.investigate(api, llm, a.budget, alert, f4=not a.no_f4, pc_cap=a.pagecheck_cap,
+                                r = graph.investigate(api, llm, a.budget, alert, f4=a.f4, pc_cap=a.pagecheck_cap,
                                                       extras=gextras + ([mem.extra(alert)] if mem else []), local_tools=gtools)
                             else:
                                 r = baseline.diagnose(api, llm, alert)

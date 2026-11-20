@@ -11,9 +11,11 @@
   cited result is ABOUT that service: a per-service tool whose service argument is it, or its row in the overview
   or the alerts, or its row in the candidate table. An overview mentions every service, so "the result mentions
   it" would accept anything (second review).
-- F4 (end-to-end only, switchable for the Week 7 comparison): another service than the paged one needs its own
-  signal change and must not be an earlier incident. Refused once: sent back with the reason; refused twice: the
-  report is "unsure", listing what was refused. The judge never swaps in a guess of its own.
+- F4 (end-to-end only) is OFF by default since patch 69: on capture 2 and capture B its "own change" condition refused
+  as many correct answers (5) as wrong ones (5), because at the first alert the root cause's own signal often hasn't
+  crossed the thresholds yet; its earlier-incident condition never fired (docs/agent.md section 9). On (f4=True, the
+  Week 7 variant): another service than the paged one needs its own signal change and must not be an earlier
+  incident; refused once, sent back with the reason; refused twice, "unsure". The judge never swaps in a guess.
 - Budgets: page_check has its own query cap; the model has `budget` tool calls in total (12, as v0), at most
   PER_HYPOTHESIS per hypothesis, MAX_ROUNDS rounds of hypotheses and MAX_LLM_CALLS model calls (quota: design §5).
   Running out ends in "unsure, here's what I ruled out", never a guess.
@@ -141,7 +143,7 @@ def _fault(x) -> str:
     return x if x in FAULTS else "unknown"
 
 
-def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = True,
+def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = False,
                 pc_cap: int = DEFAULT_CAP, extras: Optional[list[Callable[[dict], str]]] = None, checkpointer=None,
                 after_node: Optional[Callable[[str], None]] = None, local_tools: Optional[dict] = None,
                 remediation=None, thread_id: str = ""):
@@ -478,7 +480,7 @@ def result_from(s: dict, seconds: float) -> RunResult:
                      transcript=(s.get("transcript") or []) + [graph_info], seconds=seconds)
 
 
-def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = True,
+def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = False,
                 pc_cap: int = DEFAULT_CAP, extras=None, local_tools=None) -> RunResult:
     from .tracing import traced
     start = time.monotonic()
