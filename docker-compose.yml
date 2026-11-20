@@ -340,9 +340,33 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+  postgres:
+    # The agent's state (docs/agent.md section 3): LangGraph checkpoints, so an investigation survives a crash
+    # and waits for approval across restarts; later the runbook index and incident memory. One database, three
+    # uses. Major version pinned; week6.sh records the image digest it ran.
+    image: postgres:17
+    container_name: drishti-postgres
+    hostname: postgres
+    environment:
+      POSTGRES_USER: drishti
+      POSTGRES_PASSWORD: drishti_dev
+      POSTGRES_DB: drishti_agent
+    ports:
+      # 5432/5433 have been Sankalp's and FundKit's; week6.sh checks 5434 is free first.
+      - "127.0.0.1:5434:5432"
+    volumes:
+      # Persistent, unlike Redis: a checkpoint that vanished on restart would defeat its purpose.
+      - postgres-data:/var/lib/postgresql/data
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "drishti", "-d", "drishti_agent"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 volumes:
   kafka-data:
   clickhouse-data:
+  postgres-data:
 
 networks:
   default: {}

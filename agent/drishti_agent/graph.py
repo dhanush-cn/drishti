@@ -137,9 +137,11 @@ def _fault(x) -> str:
 
 
 def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = True,
-                pc_cap: int = DEFAULT_CAP, extras: Optional[list[Callable[[dict], str]]] = None, checkpointer=None):
+                pc_cap: int = DEFAULT_CAP, extras: Optional[list[Callable[[dict], str]]] = None, checkpointer=None,
+                after_node: Optional[Callable[[str], None]] = None):
     """One investigation. api, llm, alert and the switches are fixed for its lifetime (closed over); everything
-    that changes between steps is in State. `extras` add context for hypothesize (runbooks, memory; patches 63-64)."""
+    that changes between steps is in State. `extras` add context for hypothesize (runbooks, memory; patches 63-64).
+    `after_node(name)` runs after a node computes and before its result is saved (durable.py's crash point)."""
     extras = extras or []
     pc_holder: dict = {}
 
@@ -379,12 +381,22 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         d = Diagnosis.unsure(f"model error: {state['error']}", ruled_out=_ruled_out(state["hypotheses"]))
         return {"done": True, "diagnosis": d.model_dump(mode="json"), "valid": False}
 
+    def hooked(name, fn):
+        if after_node is None:
+            return fn
+
+        def run(state):
+            out = fn(state)
+            after_node(name)
+            return out
+        return run
+
     route = lambda state: state["next"]
     g = StateGraph(State)
     for name, fn in (("triage", triage_node), ("page_check", page_check_node), ("hypothesize", hypothesize_node),
                      ("test", test_model_node), ("tools", test_tools_node), ("judge", judge_node), ("report", report_node),
                      ("unsure", unsure_node), ("error", error_node)):
-        g.add_node(name, fn)
+        g.add_node(name, hooked(name, fn))
     g.add_edge(START, "triage")
     g.add_edge("triage", "page_check")
     g.add_edge("page_check", "hypothesize")

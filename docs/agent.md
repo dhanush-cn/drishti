@@ -128,3 +128,26 @@ Tests: `tests/test_graph.py`, a scripted model over a fake call graph. Every jud
 mention inside another row, candidate row without an own change, unknown id, failed query), F4 (refused and continued,
 refused twice, switched off, agent-only, no-edge service accepted on its own signal) and every budget. 16 breaks of the
 graph's rules each turn a test red.
+
+## 3. Surviving a crash (patch 61)
+
+`drishti_agent/durable.py` runs the graph with LangGraph's Postgres checkpointer (compose `postgres`, Postgres 17,
+`127.0.0.1:5434`, a persistent volume). The state is saved after every step; a step that was running when the process
+died is run again, nothing before it is.
+
+- **Step size.** Every model turn and every tool batch is its own step, so a crash costs at most one repeated model
+  call. Query calls are read-only, so repeating one is harmless. The only step with an effect, executing an approved
+  fix (section 6), is idempotent.
+- **`durability="sync"`.** LangGraph's default writes a step's checkpoint while the next step runs. The process test
+  killed a child right after a model turn and found the previous step (hypothesize) run again on resume: its
+  checkpoint was lost with the process. Synchronous writes cost a few KB per step, next to a model call.
+- **thread id** = hash(alert, until): the same alert resumes instead of starting over, and a finished investigation is
+  returned as it was, with no model call.
+- **Crash point.** `DRISHTI_AGENT_CRASH_AFTER=<node>:<n>` exits with status 3 after the n-th run of a node computes
+  and before it is saved, as storage's `-debug-crash-after-inserts` does.
+- **Evals** don't use Postgres: a replay doesn't need to survive anything, and its results mustn't depend on it.
+
+Tests (`tests/test_durable.py`): a crash after each node, resumed on the in-memory and the Postgres checkpointer, must
+give the same diagnosis with only the interrupted step repeated (one model call if it was a model turn; its own query
+calls if it made any); a killed child process (`os._exit(3)`) resumed by a new one, on Postgres. Reverted: async
+durability fails the process test 3 times out of 3; no checkpointer and resume-from-scratch fail too.

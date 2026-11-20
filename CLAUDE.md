@@ -14,7 +14,7 @@ Drishti: observability platform. Go OTLP receiver → Kafka → ClickHouse stora
 - No Docker stack for benchmarks. Validate ClickHouse DDL/SQL/RowBinary with `chdb`; end-to-end pipeline tests with `kfake` + an HTTP shim over chdb. These are correctness checks, never benchmark numbers.
 - Every change must pass `go vet ./...` and `go test -race ./...` (run ×3 for concurrency code).
 - Tests that need a real ClickHouse (`internal/chtest`) skip unless `DRISHTI_TEST_CLICKHOUSE_URL` is set: on Claude's side point it at the chdb HTTP shim (ClickHouse 26.9 engine), on the laptop at `http://localhost:8123`. Run them for any change to schema, codecs, metricsql or the query API.
-- Agent: `cd agent && python -m unittest discover -s tests` (no network, no model). Never tune prompts on capture B: it is the held-out recording (docs/evals.md section 4).
+- Agent: `cd agent && python -m unittest discover -s tests` (no network, no model). Crash/resume tests on the real checkpointer skip unless `DRISHTI_TEST_POSTGRES_URL` is set (laptop: `postgresql://drishti:drishti_dev@localhost:5434/drishti_agent`); run them for any change to `graph.py` or `durable.py`. Never tune prompts on capture B: it is the held-out recording (docs/evals.md section 4).
 
 ## Code conventions
 - Every setting is a flag with a `DRISHTI_*` env fallback.
