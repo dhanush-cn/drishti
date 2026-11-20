@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -63,6 +64,8 @@ def main(argv=None) -> int:
     ap.add_argument("--runbooks-postgres", default="", help="graph: runbooks on, searched in this Postgres (absent: the no-runbooks variant)")
     ap.add_argument("--memory-postgres", default="", help="graph: incident memory on, read-only, from this Postgres (absent: no memory)")
     ap.add_argument("--memory-from", default="", help="graph: memory sources to read, comma-separated recording names (never the one scored)")
+    ap.add_argument("--label", default="", help="variant label, e.g. no-rb, no-mem, no-f4, b20: agent and graph rows become system:label")
+    ap.add_argument("--resume", action="store_true", help="keep runs.jsonl, skip finished cells, retry failed ones (a run spread over days)")
     ap.add_argument("--columns", default="agent-only,end-to-end")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--budget", type=int, default=agent.DEFAULT_BUDGET)
@@ -83,6 +86,10 @@ def main(argv=None) -> int:
         if frozen["prompt_version"] != PROMPT_VERSION:
             print(f"refusing --held-out: prompts changed since the freeze ({frozen['prompt_version']} -> {PROMPT_VERSION})", file=sys.stderr)
             return 2
+        if "graph" in a.systems.split(",") and frozen.get("graph_prompt_version") != GRAPH_PROMPT_VERSION:
+            print(f"refusing --held-out: graph prompts not frozen or changed ({frozen.get('graph_prompt_version')} -> {GRAPH_PROMPT_VERSION})",
+                  file=sys.stderr)
+            return 2
 
     if a.memory_postgres and (not [x for x in a.memory_from.split(",") if x] or a.recording in a.memory_from.split(",")):
         print("--memory-from must name recordings other than the one scored", file=sys.stderr)
@@ -100,7 +107,7 @@ def main(argv=None) -> int:
                     rpm=a.rpm, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens)
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,
             "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": not a.no_f4, "pagecheck_cap": a.pagecheck_cap,
-            "runbooks": bool(a.runbooks_postgres), "memory_from": a.memory_from if a.memory_postgres else "",
+            "runbooks": bool(a.runbooks_postgres), "memory_from": a.memory_from if a.memory_postgres else "", "label": a.label,
             "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature, "rpm": a.rpm, "reasoning_effort": a.reasoning_effort, "max_tokens": a.max_tokens,
             "price_in": a.price_in, "price_out": a.price_out, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     print(json.dumps(meta))
@@ -126,15 +133,30 @@ def main(argv=None) -> int:
         from ..memory import Memory
         sources = [x for x in a.memory_from.split(",") if x]
         mem = Memory(a.memory_postgres, read_from=sources, read_only=True)
-    with open(out / "runs.jsonl", "w") as f:
+    def label_of(sysname: str) -> str:
+        return f"{sysname}:{a.label}" if a.label and sysname != "baseline" else sysname
+
+    done = set()
+    if a.resume and (out / "runs.jsonl").exists():
+        with open(out / "runs.jsonl") as f:
+            for line in f:
+                if line.strip():
+                    r0 = json.loads(line)
+                    if not (r0.get("result") or {}).get("error"):      # failed cells are retried
+                        done.add((r0["system"], r0["scenario"], r0["column"], r0["run"]))
+        print(f"resume: {len(done)} finished cells kept", flush=True)
+    stopped = None
+    with open(out / "runs.jsonl", "a" if a.resume else "w") as f:
         for sc in scenarios:
-            if sc.flag not in LABELS:
+            if sc.flag not in LABELS or stopped:
                 continue
             for col in columns:
                 until = sc.triggers.get(col)
                 for sysname in systems:
                     for k in range(a.runs):
-                        row = {"scenario": sc.n, "flag": sc.flag, "column": col, "system": sysname, "run": k,
+                        if stopped or (label_of(sysname), sc.n, col, k) in done:
+                            continue
+                        row = {"scenario": sc.n, "flag": sc.flag, "column": col, "system": label_of(sysname), "run": k,
                                "gate_passed": sc.gate_passed, "until": iso(until) if until else None}
                         if not sc.gate_passed:
                             # Not scored (fault gate): nothing to learn, and model time or money spent for nothing.
@@ -157,16 +179,25 @@ def main(argv=None) -> int:
                             s = score(sc.flag, r)
                             row.update(missed=False, score=s.to_json(), usd=round(cost(r, a.price_in, a.price_out), 6),
                                        result=r.model_dump(mode="json"))
+                            if sysname == "graph":
+                                # Would the proposed fix target a labelled service? Equals top-1 except for unsure:
+                                # kept in the rows, not presented as a separate result (design §15).
+                                row["fix_target"] = bool(r.diagnosis.root_cause_service) and s.top1
+                            if r.error and re.search(r"429|rate.?limit|quota|resource.?exhausted", r.error, re.I):
+                                stopped = r.error
                             print(f"  {sc.flag} {col} {sysname} #{k}: named={s.named} top1={s.top1} top3={s.top3} conf={s.confidence:.2f} "
                                   f"tools={len(r.tool_calls)} tok={r.usage.input_tokens}+{r.usage.output_tokens} {r.seconds}s"
                                   + (f" ERROR {r.error}" if r.error else ""), flush=True)
                         f.write(json.dumps(row) + "\n")
                         f.flush()
+                        if stopped:
+                            print(f"stopping: the provider's limit outlasted its waits ({stopped[:120]}). "
+                                  "Rerun the same command with --resume to continue.", flush=True)
     tracing.flush()  # LangSmith, when on: send buffered traces before the process exits
     meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     summary = report.write(out, meta)
     print(json.dumps(summary["totals"]))
-    return 0
+    return 3 if stopped else 0
 
 
 if __name__ == "__main__":

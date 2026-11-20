@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from ..prompts import PROMPT_VERSION
+from ..prompts_graph import GRAPH_PROMPT_VERSION
 from .run import FROZEN, git_commit
 
 
@@ -31,7 +32,8 @@ def main(argv=None) -> int:
     if meta["prompt_version"] != PROMPT_VERSION or meta["provider"] == "ollama":
         print(f"refusing to freeze: {s} is not a hosted run of the current prompts ({meta['provider']}, {meta['prompt_version']} vs {PROMPT_VERSION})", file=sys.stderr)
         return 2
-    FROZEN.write_text(json.dumps({"prompt_version": PROMPT_VERSION, "git_commit": git_commit(), "tuned_on": a.tuned_on,
+    FROZEN.write_text(json.dumps({"prompt_version": PROMPT_VERSION, "graph_prompt_version": GRAPH_PROMPT_VERSION,
+                                  "git_commit": git_commit(), "tuned_on": a.tuned_on,
                                   "hosted_check": {"model": meta["model"], "dir": str(a.hosted_check)},
                                   "frozen_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, indent=1) + "\n")
     print(FROZEN.read_text())

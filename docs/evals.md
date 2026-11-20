@@ -409,3 +409,34 @@ What it says:
 better than one prompt over a snapshot when it starts after the fault has been running a few minutes. At
 the first alert it does not yet beat the alert itself or the snapshot. The Week 6 design work (an explicit
 "confirm or reassign the alert's service" step rather than a free search) starts from here.
+
+## 7. Week 6: the hypothesis graph in the harness (patch 67)
+
+The Week 6 agent (`--systems graph`, docs/agent.md) runs in the same harness, on the same scenarios, triggers, fault
+gate and scorer. The Week 5 loop stays as `--systems agent`.
+
+**Variants for the Week 7 comparison**, each a flag, labelled so one results folder holds them all (`--label` makes
+rows `graph:<label>` / `agent:<label>`):
+
+| Variant | Flags |
+|---|---|
+| full graph | `--systems graph --runbooks-postgres URL --memory-postgres URL --memory-from <other recordings>` |
+| no runbooks | the same without `--runbooks-postgres`, `--label no-rb` |
+| no memory | the same without `--memory-*`, `--label no-mem` |
+| no F4 | `--no-f4 --label no-f4` |
+| v0 | `--systems agent` |
+| v0 at the graph's query budget | `--systems agent --budget 20 --label b20` (separates the design's effect from more lookups) |
+| baseline, floor | as Week 5 |
+
+- **Memory** is read-only during a run and seeded from other recordings' labels (`python -m drishti_agent.memory
+  seed`, no model calls); the runner refuses the recording being scored. On capture C the headline is without memory.
+- **Resuming across days** (`--resume`): every cell (system, scenario, column, run) is appended as it finishes; a rerun
+  skips finished cells and retries failed ones, and the report keeps the latest row per cell. A rate limit that
+  outlasts its waits stops the run with exit code 3 instead of recording a string of failures: rerun the same command
+  with `--resume` the next day. This is how the capture C score fits the free tier (design §11: about 2,300 requests,
+  about 5 days of quota).
+- **Fix on target** (would the proposed fix target a labelled service) is recorded per graph row and shown in the
+  per-scenario table. It equals top-1 except for unsure, so it is not presented as a separate result.
+- **Freeze:** `FROZEN.json` now records the graph's prompt version too, and `--held-out` refuses graph runs whose
+  prompts aren't frozen or have changed. The Week 5 freeze file has no graph version, so the held-out capture C run
+  needs a new freeze after Week 7's tuning, as planned.

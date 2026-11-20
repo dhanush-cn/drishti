@@ -14,7 +14,14 @@ from pathlib import Path
 
 
 def write(out: Path, meta: dict) -> dict:
-    rows = [json.loads(l) for l in open(out / "runs.jsonl") if l.strip()]
+    with open(out / "runs.jsonl") as f:
+        raw = [json.loads(l) for l in f if l.strip()]
+    # A resumed run appends: the latest row of a cell (system, scenario, column, run) replaces earlier ones (a retried
+    # failure). Order is kept as first seen.
+    latest = {}
+    for r in raw:
+        latest[(r["system"], r["scenario"], r["column"], r["run"])] = r
+    rows = list(latest.values())
     scen = json.loads((out / "scenarios.json").read_text())
     cells = defaultdict(list)
     for r in rows:
@@ -73,8 +80,12 @@ def write(out: Path, meta: dict) -> dict:
     p("")
     p("## Scenarios")
     p("")
-    p("| # | Flag | Gate | End-to-end trigger | Agent (agent-only) | Baseline (agent-only) | Agent (end-to-end) | Baseline (end-to-end) |")
-    p("|---|---|---|---|---|---|---|---|")
+    order = lambda name: ({"agent": 0, "baseline": 3}.get(name, 2 if name.startswith("agent:") else 1), name)
+    systems = sorted({r["system"] for r in rows} | {"agent", "baseline"}, key=order)
+    systems = [x for x in systems if x in {r["system"] for r in rows} or x in ("agent", "baseline")]
+    head = [f"{x[:1].upper()}{x[1:]} ({c})" for c in ("agent-only", "end-to-end") for x in systems]
+    p("| # | Flag | Gate | End-to-end trigger | " + " | ".join(head) + " |")
+    p("|---|---|---|---|" + "---|" * len(head))
     by = defaultdict(list)
     for r in rows:
         by[(r["scenario"], r["system"], r["column"])].append(r)
@@ -89,14 +100,15 @@ def write(out: Path, meta: dict) -> dict:
             return "missed"
         names = [r["score"]["named"] or "unsure" for r in rs]
         ok = sum(r["score"]["top1"] for r in rs)
-        return f"{ok}/{len(rs)} ({', '.join(names)})"
+        fix = [r["fix_target"] for r in rs if "fix_target" in r]
+        return f"{ok}/{len(rs)} ({', '.join(names)})" + (f"; fix on target {sum(fix)}/{len(fix)}" if fix else "")
 
     for s in scen:
         t = s.get("trigger_alert")
         trig = f"{t['service']} {t['rule']} {t['opened_at'][11:19]}" if t else "no alert"
+        cells = [cell(s["n"], x, c) for c in ("agent-only", "end-to-end") for x in systems]
         p(f"| {s['n']} | {s['flag']} | {'scored' if s['gate_passed'] else 'NOT SCORED: ' + s['gate_detail']} | {trig} | "
-          f"{cell(s['n'], 'agent', 'agent-only')} | {cell(s['n'], 'baseline', 'agent-only')} | "
-          f"{cell(s['n'], 'agent', 'end-to-end')} | {cell(s['n'], 'baseline', 'end-to-end')} |")
+          + " | ".join(cells) + " |")
     p("")
     p("Internal, provisional: replayed recordings of the OTel Demo on one laptop; see docs/evals.md for what each number means.")
     (out / "RESULTS.md").write_text("\n".join(L) + "\n")
