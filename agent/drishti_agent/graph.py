@@ -423,6 +423,7 @@ def result_from(s: dict, seconds: float) -> RunResult:
 
 def investigate(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = True,
                 pc_cap: int = DEFAULT_CAP, extras=None) -> RunResult:
+    from .tracing import traced
     start = time.monotonic()
-    s = build_graph(api, llm, budget, alert, f4=f4, pc_cap=pc_cap, extras=extras).invoke({}, {"recursion_limit": RECURSION_LIMIT})
+    s = build_graph(api, traced(llm), budget, alert, f4=f4, pc_cap=pc_cap, extras=extras).invoke({}, {"recursion_limit": RECURSION_LIMIT})
     return result_from(s, round(time.monotonic() - start, 2))

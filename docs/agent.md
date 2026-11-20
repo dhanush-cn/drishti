@@ -151,3 +151,23 @@ Tests (`tests/test_durable.py`): a crash after each node, resumed on the in-memo
 give the same diagnosis with only the interrupted step repeated (one model call if it was a model turn; its own query
 calls if it made any); a killed child process (`os._exit(3)`) resumed by a new one, on Postgres. Reverted: async
 durability fails the process test 3 times out of 3; no checkpointer and resume-from-scratch fail too.
+
+## 4. Watching an investigation: events and tracing (patch 62)
+
+**Events.** `durable.stream()` yields one readable event per finished step, built from LangGraph's per-node updates:
+`start`, `candidates` (the table and the paging service's onset), `hypotheses` (only the new ones), `tool_calls`,
+`tool_results` (id, arguments, ok, a one-line summary; only the new ones), `verdict`, `judge` (the decision in words),
+`diagnosis`, `end`. A resumed run says `resumed`; a finished one replays only its diagnosis, with no model call.
+`durable.investigate()` is the same stream, drained. The agent service (section 7) serves it as SSE.
+
+**LangSmith.** Off unless `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` are set; then each `llm.chat` is an `llm` run
+(inputs, output, tool calls, token usage) nested under the graph's node runs, which LangGraph traces by itself. Off,
+`traced(llm)` is the model object itself and nothing leaves the machine; the evals' default. Model calls stay in
+`llm.py`, so this wraps them rather than using a LangChain chat model. Cost per incident still comes from our own token
+counts. `tracing.flush()` drains both queues (LangChain's tracer for nodes, langsmith's client for model runs) before a
+short-lived process exits.
+
+Tests (`tests/test_events.py`): the event order of a run; each event carries only what's new (two rounds); resumed
+and finished runs. Tracing goes to a local stand-in for the LangSmith API, and the test counts the `llm` runs named after
+the model (3). The first version of that test passed without the wrapper, because node traces carry the same words;
+it now fails without it. LangSmith caches environment lookups, so the test clears them before and after.

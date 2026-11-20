@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from typing import Optional
 
 from . import graph
+from .tracing import traced
 from .api import QueryAPI
 from .models import RunResult
 
@@ -73,15 +74,76 @@ def investigate(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, 
                 crash: Optional[str] = None, crash_mode: str = "exit") -> RunResult:
     """Run, resume, or return a finished investigation, by thread id."""
     start = time.monotonic()
+    final = {}
+    for ev in stream(api, llm, checkpointer, alert, thread_id=thread_id, budget=budget, f4=f4, pc_cap=pc_cap,
+                     extras=extras, crash=crash, crash_mode=crash_mode):
+        if ev["type"] == "end":
+            final = ev["state"]
+    return graph.result_from(final, round(time.monotonic() - start, 2))
+
+
+def _summary(text: str, n: int = 160) -> str:
+    t = " ".join((text or "").split())
+    return t if len(t) <= n else t[:n] + "…"
+
+
+def events_for(node: str, update: dict, state: dict) -> list[dict]:
+    """Readable events for one finished step: what the dashboard shows while the investigation runs."""
+    out = []
+    if node == "page_check":
+        pc = update.get("pc") or {}
+        out.append({"type": "candidates", "paged": pc.get("paged"), "p_onset": pc.get("p_onset"), "calls": pc.get("calls"),
+                    "candidates": [{k: c.get(k) for k in ("service", "relation", "depth", "own_change", "onset", "trend")}
+                                   for c in pc.get("candidates") or []]})
+    elif node == "hypothesize" and "hypotheses" in update:
+        seen = {h["id"] for h in state.get("hypotheses") or []}
+        new = [h for h in update["hypotheses"] if h["id"] not in seen]
+        out.append({"type": "hypotheses", "round": update.get("round"),
+                    "items": [{k: h[k] for k in ("id", "service", "fault_type", "prior", "why")} for h in new]})
+    elif node == "test":
+        if update.get("pending"):
+            out.append({"type": "tool_calls", "hypothesis": state.get("current"),
+                        "calls": [{"name": c["name"], "arguments": c["arguments"]} for c in update["pending"]]})
+        if update.get("next") == "judge":
+            h = next((x for x in update.get("hypotheses") or [] if x["id"] == state.get("current")), None)
+            if h:
+                out.append({"type": "verdict", "hypothesis": h["id"], "service": h["service"], "status": h["status"],
+                            "confidence": h.get("confidence"), "evidence": h.get("evidence"), "summary": h.get("summary")})
+    elif node == "tools":
+        prev = len(state.get("tool_log") or [])
+        out.append({"type": "tool_results", "results": [{"id": e["id"], "name": e["name"], "arguments": e["arguments"], "ok": e["ok"],
+                                                         "summary": _summary(e["text"])} for e in update["tool_log"][prev:]]})
+    elif node == "judge":
+        out.append({"type": "judge", "verdict": (update.get("verdicts") or [""])[-1], "next": update.get("next")})
+    elif node in ("report", "unsure", "error"):
+        out.append({"type": "diagnosis", "diagnosis": update.get("diagnosis"), "valid": update.get("valid")})
+    return out
+
+
+def stream(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, thread_id: Optional[str] = None,
+           budget: int = graph.DEFAULT_BUDGET, f4: bool = True, pc_cap: int = graph.DEFAULT_CAP, extras=None,
+           crash: Optional[str] = None, crash_mode: str = "exit"):
+    """Run, resume, or replay a finished investigation, yielding events as steps finish. The last event is
+    {"type": "end", "state": <final state>}. A finished investigation yields only its diagnosis and end."""
     tid = thread_id or investigation_id(alert, api.until)
     hook = crash_point(crash if crash is not None else os.environ.get(CRASH_ENV), crash_mode)
-    g = graph.build_graph(api, llm, budget, alert, f4=f4, pc_cap=pc_cap, extras=extras, checkpointer=checkpointer, after_node=hook)
+    g = graph.build_graph(api, traced(llm), budget, alert, f4=f4, pc_cap=pc_cap, extras=extras, checkpointer=checkpointer,
+                          after_node=hook)
     config = {"configurable": {"thread_id": tid}, "recursion_limit": graph.RECURSION_LIMIT}
+    yield {"type": "start", "thread_id": tid, "alert": alert, "until": api.until}
     snap = g.get_state(config)
-    if snap.values and not snap.next:
-        s = snap.values                      # finished: return it as it was
-    elif snap.values:
-        s = g.invoke(None, config, durability=DURABILITY)   # interrupted: continue from the last saved step
-    else:
-        s = g.invoke({}, config, durability=DURABILITY)     # new
-    return graph.result_from(s, round(time.monotonic() - start, 2))
+    if snap.values and not snap.next:          # finished: as it was, no model call
+        yield {"type": "diagnosis", "diagnosis": snap.values.get("diagnosis"), "valid": snap.values.get("valid"), "replayed": True}
+        yield {"type": "end", "state": dict(snap.values)}
+        return
+    state: dict = dict(snap.values) if snap.values else {}
+    if state:
+        yield {"type": "resumed", "next": list(snap.next)}
+    for chunk in g.stream(None if state else {}, config, stream_mode="updates", durability=DURABILITY):
+        for node, update in chunk.items():
+            if not isinstance(update, dict):
+                continue
+            for ev in events_for(node, update, state):
+                yield {**ev, "node": node}
+            state.update(update)
+    yield {"type": "end", "state": state}

@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import agent, baseline, graph
+from .. import agent, baseline, graph, tracing
 from ..api import QueryAPI
 from ..llm import from_args
 from ..pagecheck import DEFAULT_CAP
@@ -142,6 +142,7 @@ def main(argv=None) -> int:
                                   + (f" ERROR {r.error}" if r.error else ""), flush=True)
                         f.write(json.dumps(row) + "\n")
                         f.flush()
+    tracing.flush()  # LangSmith, when on: send buffered traces before the process exits
     meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     summary = report.write(out, meta)
     print(json.dumps(summary["totals"]))
