@@ -1,0 +1,83 @@
+# The Week 6 investigator
+
+Design record for the root-cause agent's Week 6 graph. The Week 5 loop, its evals and the held-out result are
+in `docs/evals.md`; the design note with every decision (F1–F14) and the reviews that changed it is
+`WEEK6-DESIGN.md` in the project notes. This file grows one section per patch.
+
+Week 5 ended with the agent above the baseline when it starts on a developed incident (agent-only, capture B:
+22/27 vs 19/27), and below it at the first alert (end-to-end: 10/27 vs 17/27, and below simply repeating the
+alert). At the first alert the fault is seconds old, and the free tool loop either drifted to a louder neighbour
+or withdrew to "unsure". Week 6 makes the page the **default hypothesis**: the agent confirms it or moves it to
+another service with evidence. The mechanical parts are deterministic code; the model keeps the judgement.
+
+## 0. The loop as a graph (patch 56)
+
+`agent.py` runs the Week 5 loop as a LangGraph graph, unchanged: triage (code) → model ⇄ tools, plus a turn-limit
+step. State is plain data and every model turn is its own step, so a checkpointer can later save it between steps.
+`tests/test_graph_parity.py` holds it to the Week 5 loop's recorded results on 19 scripted paths. Model calls stay
+in `llm.py` (HTTP from the standard library; Gemini's thought signatures go back verbatim).
+
+## 1. page_check and rule F4 (patch 57)
+
+`drishti_agent/pagecheck.py`. No model.
+
+### The candidate table
+
+From the paging service (end-to-end), or the top 5 changed services in triage (agent-only):
+
+1. `overview` (the triage windows): each service's own changes, by the query API's deterministic thresholds.
+2. `spans` per service: SERVER rows that changed are the service's **own** change; CLIENT rows that err or slow
+   down are **victim signs**, and their `callee` is followed (breadth-first, depth ≤ 3).
+3. Services that changed in triage but weren't reached are added as **changed (no edge)**: an alert can land on
+   a service with no call path to the root cause (capture B's emailMemoryLeak was paged on recommendation).
+4. `timeseries` (30 min, 30 s steps) for each candidate's main changed signal: its **onset** and **trend**.
+
+Own change counts SERVER errors, latency and calls, CPU and memory. Log changes do not: a log spike is also what a
+victim writes when its calls fail.
+
+Every call goes through a counted budget (`DEFAULT_CAP` = 8, design F5) and the walk stops when it runs out.
+`rulecheck` measures what a full walk needs on the recordings, which is what the cap should be set from.
+
+### Rules, fixed before any run
+
+All thresholds are the overview's (`internal/queryapi` `changes()`): error ratio ≥ 2× and +0.02 (≥ 0.01),
+p95 ≥ 2× and +20 ms, CPU ≥ 2× and +1 point, calls ×3 / ÷3 (≥ 1/min), memory rising ≥ 1 MiB/min.
+
+- **Onset of a timeseries.** Reference R = the 10th percentile of the 30 minutes (90th for a traffic drop): faults
+  fill up to 4 of every 7 minutes of a recording, so a mean or median would sit inside them. Points are smoothed
+  with a 1-minute mean. Onset = the first point of the final run of points past the threshold that reaches the
+  newest point; the run breaks only on 2 smoothed points not past (about 1.5 min of quiet). Newest point not past:
+  no current change. Resolution 30 s; a step whose halfway value doesn't cross the threshold shows one point late.
+- **Onset of memory.** Change-point fit: for every split, a flat level before it and a least-squares line after it;
+  the split with the least total squared error is the knee, and it is an onset if the line climbs ≥ 1 MiB/min with
+  R² ≥ 0.8 (the detector's). The first version ("the earliest point whose fit over the rest passes") was wrong: its
+  unit test showed a flat-then-climbing series fits a line well enough from the very first point.
+- **Trend at the page.** The last 2 minutes' mean against the 2 before, with the same threshold in the fault's
+  direction: past it = worsening, past it the other way = recovering, else holding. Memory: slope over the last
+  4 minutes, ±1 MiB/min.
+- **The paging service's onset, by the rule that fired.** New template: "first seen" from the alert's evidence.
+  Template or error-log spike: the start of the window that fired. Span rules: that span's own timeseries for a
+  SERVER series; a CLIENT series falls back to the window start and says so (`/v1/timeseries` reads SERVER spans
+  only until patch 58). Memory: the climb's knee.
+
+### F4: naming a service other than the paged one (end-to-end only)
+
+A final answer naming S ≠ the paging service P is accepted only if:
+- **S's own signal changed** (a candidate with an own change: a service that only fails because of a callee
+  doesn't qualify), and
+- **S is not an earlier incident**: its onset more than 5 min before **P's onset** while it is holding or
+  recovering at the page. A change that began long before but is still worsening (a slow leak) is allowed.
+
+Why P's onset and not the alert time: alerts come late (capture 2: cartFailure's own signal 119 s,
+emailMemoryLeak 155 s; capture B: emailMemoryLeak about 17 min), and a root cause leads its victims. Why 5 minutes:
+chosen with the recordings' 7-minute scenario cadence in view (the previous scenario starts about 7 min earlier
+and is recovering by the page), and fixed before the ceiling check. A call edge to the page is evidence, never
+required. Agent-only has no page, so F4 does not apply there.
+
+### The ceiling check
+
+`python -m drishti_agent.evals.rulecheck` (or `scripts/week5-eval.sh rulecheck NAME TIMELINE OUT --runs RUNS`),
+no model calls. Per scored scenario, from its trigger alert only: is the labelled service in the table (by an edge
+or not, with the cap and with a full walk), would F4 accept it, would F4 refuse each wrong service the Week 5
+agent named, how many query calls the walk used, and how far each onset is from the flag-on time. Its first runs on
+capture 2 and capture B are reviewed before the hypothesis loop (patch 59) is built on the rule.

@@ -7,6 +7,7 @@
 #   scripts/week5-eval.sh queryapi                  (re)start the eval query API on 127.0.0.1:8091
 #   scripts/week5-eval.sh leakcheck TIMELINE        every endpoint, every service, every scenario: no leaks
 #   scripts/week5-eval.sh run NAME TIMELINE OUT [runner args...]   python -m drishti_agent.evals.run ...
+#   scripts/week5-eval.sh rulecheck NAME TIMELINE OUT [--runs RUNS.jsonl ...]   F4 ceiling check, no model (patch 57)
 #
 # Results and logs go under $EVAL_WORK (default ./eval-work, gitignored).
 set -euo pipefail
@@ -62,6 +63,20 @@ count() {
     --data-binary "$1" "$CH_URL/"
 }
 
+# The agent's venv, with its unit tests green. Reinstalled whenever pyproject.toml changes (patch 56 added
+# LangGraph): an existing venv would otherwise keep the old dependencies. langchain-core needs Python >= 3.11.
+agent_venv() {
+  if [[ ! -x agent/.venv/bin/python ]] || ! cmp -s agent/pyproject.toml agent/.venv/pyproject.installed; then
+    [[ -x agent/.venv/bin/python ]] || python3 -m venv agent/.venv
+    agent/.venv/bin/python -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+      echo "the agent needs Python >= 3.11 (LangGraph); agent/.venv has $(agent/.venv/bin/python --version)."
+      echo "Install python3.11+ (e.g. sudo apt install python3.12-venv), then: rm -rf agent/.venv and rerun."; exit 1; }
+    agent/.venv/bin/pip install -q -e agent
+    cp agent/pyproject.toml agent/.venv/pyproject.installed
+  fi
+  (cd agent && .venv/bin/python -W ignore -m unittest discover -s tests >/dev/null 2>&1) || { echo "agent unit tests failed"; exit 1; }
+}
+
 case "${1:-}" in
   load)
     rec=${2:?recording}
@@ -90,19 +105,14 @@ case "${1:-}" in
   leakcheck)
     python3 scripts/leakcheck.py --api "http://$API_ADDR" --timeline "${2:?timeline}"
     ;;
+  rulecheck)
+    name=${2:?name}; tl=${3:?timeline}; out=${4:?out dir}; shift 4
+    agent_venv
+    agent/.venv/bin/python -m drishti_agent.evals.rulecheck --api "http://$API_ADDR" --timeline "$tl" --recording "$name" --out "$out" "$@"
+    ;;
   run)
     name=${2:?name}; tl=${3:?timeline}; out=${4:?out dir}; shift 4
-    # Reinstall whenever pyproject.toml changes (patch 56 added LangGraph): an existing venv would
-    # otherwise keep the old dependencies. LangGraph's langchain-core needs Python >= 3.11.
-    if [[ ! -x agent/.venv/bin/python ]] || ! cmp -s agent/pyproject.toml agent/.venv/pyproject.installed; then
-      [[ -x agent/.venv/bin/python ]] || python3 -m venv agent/.venv
-      agent/.venv/bin/python -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
-        echo "the agent needs Python >= 3.11 (LangGraph); agent/.venv has $(agent/.venv/bin/python --version)."
-        echo "Install python3.11+ (e.g. sudo apt install python3.12-venv), then: rm -rf agent/.venv and rerun."; exit 1; }
-      agent/.venv/bin/pip install -q -e agent
-      cp agent/pyproject.toml agent/.venv/pyproject.installed
-    fi
-    (cd agent && .venv/bin/python -W ignore -m unittest discover -s tests >/dev/null 2>&1) || { echo "agent unit tests failed"; exit 1; }
+    agent_venv
     DRISHTI_GIT_COMMIT=$(git rev-parse --short HEAD) agent/.venv/bin/python -m drishti_agent.evals.run \
       --api "http://$API_ADDR" --timeline "$tl" --recording "$name" --out "$out" "$@"
     ;;

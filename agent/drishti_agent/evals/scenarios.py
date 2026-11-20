@@ -85,7 +85,10 @@ def first_alert(base_url: str, sc: Scenario) -> Optional[dict]:
 def set_triggers(base_url: str, sc: Scenario) -> None:
     sc.triggers["agent-only"] = sc.off
     a = first_alert(base_url, sc)
-    sc.trigger_alert = {"service": a["service"], "rule": a["rule"], "opened_at": a["opened_at"], "series": a.get("series") or {}} if a else None
+    # id, window and detail are for page_check (patch 57): a log rule's onset comes from its evidence ("first seen …",
+    # or the window that fired). The briefing reads only service, rule, series and opened_at, so prompts are unchanged.
+    sc.trigger_alert = {"service": a["service"], "rule": a["rule"], "opened_at": a["opened_at"], "series": a.get("series") or {},
+                        "id": a.get("id"), "window": a.get("window"), "detail": a.get("detail")} if a else None
     # In replay an alert's detected_at is its bucket end = opened_at (docs/detector.md section 5).
     sc.triggers["end-to-end"] = parse_ts(a["opened_at"]) if a else None
 
