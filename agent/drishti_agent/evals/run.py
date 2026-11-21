@@ -8,7 +8,7 @@ fault gate, then K runs of each system (agent, baseline) per column. Writes
 runs.jsonl (every run with its transcript), scenarios.json, summary.json and
 RESULTS.md.
 
---ledger (or $DRISHTI_LEDGER) records every model request and stops the run at a daily cap of requests per model
+--ledger FILE records every model request and stops the run at a daily cap of requests per model
 (patch 74, drishti_agent.ledger): like a rate limit that outlasted its waits, rerun with --resume.
 
 --held-out marks the final scoring of a recording that was never used for
@@ -116,8 +116,9 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--rpm", type=float, default=0.0, help="pace model requests to this many per minute (free tiers); 0 = no pacing")
     ap.add_argument("--reasoning-effort", default="", help="passed to OpenAI-compatible APIs (thinking models), e.g. low")
     ap.add_argument("--max-tokens", type=int, default=2048, help="output cap per model call (thinking models may need more)")
-    ap.add_argument("--ledger", default=os.environ.get("DRISHTI_LEDGER", ""),
-                    help="request ledger file (default $DRISHTI_LEDGER): every model request recorded, a daily cap enforced")
+    # Explicit only, never from the environment: an exported variable made every runner test write into the real
+    # ledger (Week 7 check 1, 21 Nov: 12 test requests under the Gemini model's name).
+    ap.add_argument("--ledger", default="", help="request ledger file: every model request recorded, a daily cap enforced")
     ap.add_argument("--max-requests-per-day", type=int, default=DEFAULT_MAX_REQUESTS, help="ledger cap, per model per ledger day")
     ap.add_argument("--held-out", action="store_true", help="final scoring of an untouched recording: requires FROZEN.json")
     ap.add_argument("--floor", action="store_true", help="the deterministic floor (repeat the alert / top changed service) "

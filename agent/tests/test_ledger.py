@@ -121,6 +121,24 @@ class RunnerStops(unittest.TestCase):
             h.tearDown()
 
 
+class NotFromTheEnvironment(unittest.TestCase):
+    def test_an_exported_variable_does_not_make_the_runner_write_a_ledger(self):
+        from unittest import mock
+        from test_harness import Harness
+        from test_durable import ByContent
+        h = Harness("run_")
+        h.setUp()
+        try:
+            led = os.path.join(h.d, "env-ledger.jsonl")
+            with mock.patch.dict(os.environ, {"DRISHTI_LEDGER": led}):
+                code, _, out = h.run_(ByContent(tempfile.mktemp()))
+            self.assertEqual(code, 0)
+            self.assertFalse(os.path.exists(led), "only --ledger turns the ledger on")
+            self.assertEqual(json.loads(open(os.path.join(out, "summary.json")).read())["meta"]["ledger"], "")
+        finally:
+            h.tearDown()
+
+
 class RunnerChecksBeforeACell(unittest.TestCase):
     def test_a_cap_reached_between_cells_writes_no_failed_row(self):
         from test_harness import Harness

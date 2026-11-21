@@ -435,7 +435,8 @@ rows `graph:<label>` / `agent:<label>`):
   outlasts its waits stops the run with exit code 3 instead of recording a string of failures: rerun the same command
   with `--resume` the next day. This is how the capture C score fits the free tier (design §11: about 2,300 requests,
   about 5 days of quota).
-- **Request ledger and daily cap** (patch 74, `--ledger FILE` or `$DRISHTI_LEDGER`): every model request is appended
+- **Request ledger and daily cap** (patch 74, `--ledger FILE`; patch 82 dropped the `$DRISHTI_LEDGER` default after
+  the agent tests, run by the driver with it exported, wrote into the real ledger): every model request is appended
   to the ledger (time, model, cell, tokens, status, failed requests included; USD at the given prices, what it would
   cost on a paid tier), and before each request the day's count for that model is summed from the file. At
   `--max-requests-per-day` (default 450, below the free tier's 500) the request is refused and the run stops like a rate
