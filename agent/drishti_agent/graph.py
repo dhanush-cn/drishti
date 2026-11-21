@@ -413,13 +413,22 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         return {"hypotheses": hyps, "refusals": refusals, "verdicts": verdicts + [f"stop: {why}"], "next": "unsure",
                 "budget_exhausted": state["used"] >= cap(state)}
 
-    def _ranked(hyps: list[dict], first: Optional[str] = None) -> list[str]:
+    def _ranked(state: State, first: Optional[str] = None) -> list[str]:
+        """Up to 3 services, for top-3 (patch 77, Week 7 design G4): the answer, then hypotheses not refuted (supported,
+        open, inconclusive, refused; by confidence or prior), then padded from the candidate table in its order (the
+        paged service, callees by depth, services changed with no edge). Every report has one, an unsure one too: on
+        capture 2 two unsure end-to-end reports had the right paged service and an empty list. The padding may bring
+        back a refuted service: the page is evidence about the paged service whatever the model concluded."""
+        hyps = state["hypotheses"]
         order = {"supported": 0, "open": 1, "inconclusive": 2, "refused": 3, "refuted": 4}
         rest = sorted(hyps, key=lambda x: (order.get(x["status"], 5), -(x.get("confidence") or x["prior"])))
         out = [first] if first else []
-        for x in rest:
-            if x["status"] != "refuted" and x["service"] not in out:
-                out.append(x["service"])
+        seen = {norm(first)} if first else set()
+        for svc in [x["service"] for x in rest if x["status"] != "refuted"] + \
+                   [c["service"] for c in (state.get("pc") or {}).get("candidates") or []]:
+            if norm(svc) not in seen:
+                out.append(svc)
+                seen.add(norm(svc))
         return out[:3]
 
     def _ruled_out(hyps: list[dict]) -> list[str]:
@@ -441,14 +450,14 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
                 e = by_id[ref]
                 evidence.append(f"[{ref}] {e['name']} {json.dumps(e['arguments'], sort_keys=True)}: {e['text'][:200]}")
         d = Diagnosis(root_cause_service=h["service"], fault_type=FaultType(h["fault_type"]), confidence=h["confidence"],
-                      ranked_services=_ranked(hyps, h["service"]), evidence=evidence, ruled_out=_ruled_out(hyps),
+                      ranked_services=_ranked(state, h["service"]), evidence=evidence, ruled_out=_ruled_out(hyps),
                       summary=h["summary"] or f"{h['service']} ({h['fault_type']})")
         return {"done": True, "diagnosis": d.model_dump(mode="json"), "valid": True}
 
     def unsure_node(state: State) -> dict:
         hyps = state["hypotheses"]
         why = state["verdicts"][-1] if state["verdicts"] else "no diagnosis"
-        d = Diagnosis(root_cause_service=None, fault_type=FaultType.unknown, confidence=0.0, ranked_services=_ranked(hyps),
+        d = Diagnosis(root_cause_service=None, fault_type=FaultType.unknown, confidence=0.0, ranked_services=_ranked(state),
                       ruled_out=_ruled_out(hyps) + [f"refused by F4: {r}" for r in state["refusals"]],
                       summary=f"unsure: {why}")
         return {"done": True, "diagnosis": d.model_dump(mode="json"), "valid": True}

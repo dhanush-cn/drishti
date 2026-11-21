@@ -393,3 +393,13 @@ to end unsure, the investigation looks again two minutes after the page instead.
 - **Controls:** `--recheck-minutes off` (no second look) and `--recheck-minutes 0` (the same extra round at the page's
   moment: separates more time from more calls).
 - The prompts changed (the second look's message), so GRAPH_PROMPT_VERSION changed; the Week 5 prompts didn't.
+
+## 13. Every report ranks three services (patch 77, Week 7 design G4)
+
+Top-3 counts the labelled service anywhere in a report's ranked list; top-1 counts only a committed answer; unsure is
+never top-1 and never confidently wrong. Until now an unsure report ranked only the hypotheses it hadn't refuted, so on
+capture 2 two unsure end-to-end reports (adHighCpu, recommendationCacheFailure) whose paged service was the root cause
+ranked nothing. Now the list is the answer (if any), then the hypotheses not refuted (by confidence or prior), padded from
+the candidate table in its order: the paged service, callees by depth, services changed with no call edge. The padding
+may bring back a refuted service, deliberately: the page is evidence about the paged service whatever the model
+concluded. `Diagnosis` keeps at most 3, de-duplicated.
