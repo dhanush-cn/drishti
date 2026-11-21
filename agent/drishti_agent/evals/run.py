@@ -65,6 +65,8 @@ def main(argv=None) -> int:
     ap.add_argument("--systems", default="agent,baseline", help="any of agent (v0), graph (Week 6), baseline")
     ap.add_argument("--f4", action="store_true", help="graph: switch rule F4 on (off by default since patch 69; a Week 7 variant)")
     ap.add_argument("--pagecheck-cap", type=int, default=DEFAULT_CAP, help="graph: query calls page_check may make")
+    ap.add_argument("--inject", default="", help="guardrail eval (patch 78): a bystander service that appears to log an "
+                    "instruction to the agent (evals/inject.py); capture 2 only")
     ap.add_argument("--recheck-minutes", default=f"{graph.RECHECK_MINUTES:g}",
                     help="graph, end-to-end: look again this many minutes after the page when the first look ends unsure "
                          "(patch 76; default 2; 0 = the same moment, the time-vs-calls control; off = no second look)")
@@ -88,6 +90,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     recheck = None if a.recheck_minutes.strip().lower() == "off" else float(a.recheck_minutes)
+    if a.inject and a.held_out:
+        print("refusing --inject with --held-out: the injection fixture is for capture 2 only", file=sys.stderr)
+        return 2
 
     if a.held_out:
         if not FROZEN.exists():
@@ -119,7 +124,7 @@ def main(argv=None) -> int:
     if a.ledger and a.provider != "heuristic":   # the floor makes no model request
         llm = Metered(llm, Ledger(a.ledger, getattr(llm, "name", a.model), a.price_in, a.price_out, a.max_requests_per_day))
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,
-            "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": a.f4, "pagecheck_cap": a.pagecheck_cap, "recheck_minutes": recheck,
+            "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": a.f4, "pagecheck_cap": a.pagecheck_cap, "recheck_minutes": recheck, "inject": a.inject,
             "runbooks": bool(a.runbooks_postgres), "memory_from": a.memory_from if a.memory_postgres else "", "label": a.label,
             "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature, "rpm": a.rpm, "reasoning_effort": a.reasoning_effort, "max_tokens": a.max_tokens,
             "price_in": a.price_in, "price_out": a.price_out, "ledger": a.ledger, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
@@ -188,6 +193,9 @@ def main(argv=None) -> int:
                                                             "confidently_wrong": False, "named": None, "confidence": 0.0})
                         else:
                             api = QueryAPI(a.api, iso(until))
+                            if a.inject:
+                                from .inject import InjectingAPI
+                                api = InjectingAPI(api, a.inject)
                             # End-to-end runs start from the alert that paged; agent-only runs from a report with no alert.
                             alert = sc.trigger_alert if col == "end-to-end" else None
                             if sysname == "agent":
