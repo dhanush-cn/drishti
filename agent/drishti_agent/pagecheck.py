@@ -486,3 +486,139 @@ def reassignment(answer: Optional[str], pc: PageCheck) -> tuple[bool, str]:
                            f"{pc.paged}'s and is {c.trend} at the page")
     edge = f"reached from {pc.paged}" if c.relation in ("callee", "paged") else "no call edge to the page"
     return True, f"{answer}: own change ({c.own_change[0]}); {edge}" + ("" if c.onset else "; onset not measured")
+
+
+# ---- design rule G3′, the stale-change guard (Week 7; end-to-end only) ----
+#
+# Fixed in the design note (section 4) before its ceiling check: it reuses onset_of's reference, smoothing, past()
+# thresholds and run-break rule, trend_of and memory_onset, and adds no threshold of its own.
+
+STALE_SIGNALS = (("error_ratio", "up"), ("p95_ms", "up"), ("cpu", "up"), ("calls", "up"), ("calls", "down"), ("memory_mib", "up"))
+
+
+def runs_of(points: list[dict], sig: str, direction: str = "up", step_s: float = 30.0) -> tuple[list[tuple[int, int]], bool]:
+    """Runs of past smoothed points as (first, last) indexes, with page_check's run-break rule: a run ends where 2
+    consecutive smoothed points are not past. Returns the runs and whether the last one is closed by that rule
+    (False: it reaches the newest point, or only 1 quiet point follows it so far). Same reference and smoothing as
+    onset_of, so the run reaching the newest point starts exactly at onset_of's onset."""
+    raw = [p.get("v") for p in points]
+    vals = [v for v in raw if v is not None]
+    ref = percentile(vals, 90 if direction == "down" else 10)
+    flags = [past(sig, v, ref, step_s, direction) for v in smooth(raw)]
+    runs: list[tuple[int, int]] = []
+    start = last = None
+    quiet = 0
+    for i, f in enumerate(flags):
+        if f:
+            if start is None:
+                start = i
+            last, quiet = i, 0
+        elif start is not None:
+            quiet += 1
+            if quiet >= 2:
+                runs.append((start, last))
+                start = None
+    if start is not None:
+        runs.append((start, last))
+        return runs, False
+    return runs, bool(runs)
+
+
+@dataclass
+class SignalState:
+    signal: str
+    direction: str
+    state: str                 # live | over (ended) | over (recovering) | none | other (ignored: see note)
+    start: Optional[str] = None
+    end: Optional[str] = None
+    trend: Optional[str] = None
+    note: str = ""
+
+
+def signal_state(points: list[dict], sig: str, direction: str, p_onset: datetime, step_s: float = 30.0) -> SignalState:
+    """One of S's signals against the paging service's onset (design note section 4):
+    live            a run reaches the newest point and the trend at the page is not recovering;
+    over (ended)    the last run was closed by the run-break rule, and its last past point is before P's onset;
+    over (recovering)  a run reaches the newest point, the trend is recovering, and the run began before P's onset;
+    none            no run in the window;
+    other           a run that is none of these (ended after P's onset, recovering but begun after it, or fading with
+                    one quiet point so far): it counts neither way."""
+    ts = [p["t"] for p in points]
+    trend = trend_of(points, sig, direction, step_s) if points else None
+    if sig == "memory_mib":
+        o = memory_onset(points)
+        if not o.at:
+            return SignalState(sig, direction, "none", trend=trend, note=o.how)
+        if trend != "recovering":
+            return SignalState(sig, direction, "live", start=o.at, trend=trend)
+        if parse_ts(o.at) < p_onset:
+            return SignalState(sig, direction, "over (recovering)", start=o.at, trend=trend)
+        return SignalState(sig, direction, "other", start=o.at, trend=trend, note="recovering, began after the page's onset")
+    runs, closed = runs_of(points, sig, direction, step_s)
+    if not runs:
+        return SignalState(sig, direction, "none", trend=trend)
+    s, e = runs[-1]
+    start, end = ts[s], ts[e]
+    if e == len(points) - 1:
+        if trend != "recovering":
+            return SignalState(sig, direction, "live", start=start, trend=trend)
+        if parse_ts(start) < p_onset:
+            return SignalState(sig, direction, "over (recovering)", start=start, trend=trend)
+        return SignalState(sig, direction, "other", start=start, trend=trend, note="recovering, began after the page's onset")
+    if closed:
+        if parse_ts(end) < p_onset:
+            return SignalState(sig, direction, "over (ended)", start=start, end=end, trend=trend)
+        return SignalState(sig, direction, "other", start=start, end=end, trend=trend, note="ended after the page's onset")
+    return SignalState(sig, direction, "other", start=start, end=end, trend=trend, note="fading: one quiet point so far")
+
+
+@dataclass
+class StaleCheck:
+    applies: bool
+    stale: bool
+    why: str
+    signals: list[SignalState] = field(default_factory=list)
+    calls: int = 0
+
+    def to_json(self) -> dict:
+        return asdict(self)
+
+
+def stale_change(api: QueryAPI, service: Optional[str], paged: Optional[str], p_onset: Optional[str]) -> StaleCheck:
+    """Is the answer S a stale change (G3′)? S is stale if at least one of its own signals is over and none is live.
+    Not applied to the paged service, to no answer, or when P's onset is unknown. A service with no run at all is not
+    stale: no change is not a stale change (paymentUnreachable's payment shows none; F4 refused it for that)."""
+    if not service or not paged or norm(service) == norm(paged):
+        return StaleCheck(False, False, "the paged service or no answer: not checked")
+    if not p_onset:
+        return StaleCheck(False, False, "the page's onset is unknown: not checked")
+    p_at = parse_ts(p_onset)
+    states: list[SignalState] = []
+    calls = 0
+    series: dict[str, Optional[list]] = {}
+    for sig, direction in STALE_SIGNALS:
+        if sig not in series:
+            calls += 1
+            try:
+                series[sig] = (api.get("/v1/timeseries", service=service, signal=sig, window=ONSET_WINDOW, step=STEP)["data"]
+                               or {}).get("points") or []
+            except APIError:
+                series[sig] = None
+        pts = series[sig]
+        if pts is None:
+            states.append(SignalState(sig, direction, "other", note="timeseries unavailable"))
+        else:
+            states.append(signal_state(pts, sig, direction, p_at))
+    live = [s for s in states if s.state == "live"]
+    over = [s for s in states if s.state.startswith("over")]
+    if over and not live:
+        s = over[0]
+        when = f"past {s.start} to {s.end}" if s.state == "over (ended)" else f"past since {s.start} and recovering at the page"
+        return StaleCheck(True, True, f"{service}: stale change: {s.signal}{' drop' if s.direction == 'down' else ''} was {when}; "
+                                      f"{paged}'s page started {p_onset}; no own signal of {service} is changing now", states, calls)
+    if live:
+        s = live[0]
+        why = f"{service}: live change ({s.signal}{' drop' if s.direction == 'down' else ''} past since {s.start}, {s.trend})"
+    else:
+        why = f"{service}: no over signal (no change, or none that ended before the page)"
+    return StaleCheck(True, False, why, states, calls)

@@ -334,3 +334,29 @@ refuted ad and recommendation and left payment (paymentFailure) inconclusive.
   accepted more often; the victim rule (failing client calls point to the callee) still applies. Capture 2 only (the
   tuning recording); capture B and C untouched.
 - Measured after this change: docs/evals.md section 8.
+
+## 11. The stale-change guard, G3′ (patch 75: the rule and its ceiling check; not in the judge yet)
+
+On capture 2 (21 Nov) both confidently-wrong end-to-end answers named a service whose change had already ended before
+the page started: ad for productCatalogLockContention (ad's p95 spike was the previous scenario, back to normal two
+minutes before the page) and product-catalog for imageSlowLoad (likewise). The model's own evidence showed the recovery.
+"Had a big spike in the last ten minutes" is not "is the cause now", and that is a timing fact, so it belongs in code.
+
+`pagecheck.stale_change(api, S, paged, p_onset)`, fixed in the Week 7 design note (section 4) before its ceiling check,
+reusing page_check's pieces and adding no threshold:
+
+- S's own signals: server error ratio, p95, CPU, calls (a rise and a drop), memory, each read as page_check reads an
+  onset (30 min at 30 s; 5 query calls, the two call directions share one series).
+- Runs of past points: `onset_of`'s reference, 2-point smoothing and `past()`; a run **ends where 2 consecutive smoothed
+  points are not past** (page_check's run-break rule). `runs_of` is tested to start its newest run exactly at `onset_of`.
+- A signal is **live** if a run reaches the newest point and `trend_of` isn't "recovering". It is **over** if its last
+  run ended by the run-break rule before P's onset, or if a run reaches the newest point, is "recovering", and began
+  before P's onset. Memory: live if `memory_onset` finds a climb that isn't recovering; over only by recovering.
+- **S is stale if at least one signal is over and none is live.** No run at all is not stale (no change is not a stale
+  change: F4 refused paymentUnreachable's payment for showing none, and was switched off for it). The paged service, no
+  answer, and an unknown P onset are not checked.
+
+Patch 77 puts it in the judge (end-to-end only): a stale answer is sent back once with the reason, a second one becomes
+unsure. Only if the ceiling check passes: `rulecheck --stale` must reject **0 labelled answers on capture 2 and on capture
+B**, at the trigger and two minutes later (the Week 7 recheck), and it reports how many committed wrong answers in past
+results files it would have caught (docs/evals.md section 9).

@@ -487,3 +487,21 @@ attempt with 5 minutes produced no alert).
 | recovery | product-catalog's server error ratio back within the threshold of its pre-incident reference (0) for 4 checks in a row, 30 s apart; confirmed 180 s after the action (7 checks) |
 
 One live run shows the loop works end to end; it is not an accuracy measurement.
+
+## 9. Week 7 ceiling check: the recheck (G2) and the stale guard (G3′) (patch 75)
+
+No model calls. `rulecheck --recheck 1,2,3 --stale --wrong-runs RUNS.jsonl ...` adds to the F4 check, per scored scenario
+with an end-to-end alert:
+
+- **G2:** page_check again at the trigger + 1, 2 and 3 minutes (2 is the design's delay, 1 and 3 for information): is
+  the labelled service in the candidate table with an own-signal change by then, and is that moment still before
+  flag-off?
+- **G3′ on the label:** would the stale-change guard (docs/agent.md section 11) reject the labelled service at the
+  trigger or at the trigger + 2 minutes? The condition set on 21 Nov: **0 rejected on capture 2 and 0 on capture B**,
+  printed as PASS or FAIL; any rejection is listed with its reason, and the guard isn't put in the judge as written.
+- **Catches:** every committed wrong end-to-end answer in the given results files (agent or graph rows, never the
+  baseline), checked at its own run's `until`. Per source: confidently wrong (confidence ≥ 0.7) caught / total, other
+  wrong answers caught / total, and how many name the paged service (which the guard never checks).
+
+Week 7's sources: capture 2, the Week 6 graph runs (`graph-hosted`, `graph-hosted-3213caa16cbc`, `graph-ollama`,
+`graph-ollama-3213caa16cbc`); capture B, the Week 5 v0 runs (`hosted-run1..3`).
