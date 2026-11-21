@@ -313,3 +313,23 @@ keeps the candidate table as context and the grounding check as its judge; the m
 **12**, set from the largest walk (11); 8 cut one walk short of its onsets.
 
 Also from the check: the labelled service is reached by every agent-only walk (10/10, 9/9).
+
+## 10. The page is evidence about the paged service (patch 71)
+
+The first graph runs on capture 2 (21 Nov, 1 run each, F4 off): Qwen 7B 5/10 agent-only and 3/10 end-to-end; Gemini
+3.5 Flash-Lite 8/10 and 4/10 (unsure 5, confidently wrong 1). In several end-to-end misses the page was on the root
+cause and the model ruled it out: Gemini refuted ad (adHighCpu) and recommendation (recommendationCacheFailure); Qwen
+refuted ad and recommendation and left payment (paymentFailure) inconclusive.
+
+- **Why:** the page came before the fault reached the paged service's metrics. Triage's rows at the alert:
+  ad CPU 0.494 vs 0.468; recommendation memory +0.14 MiB/min; payment server error ratio 0 vs 0. The model guessed a
+  fault type, found that signal flat, and refuted the service. No comparison window could show it: the change wasn't
+  there yet. The alert (a log spike, a new log line) was the only own change so far.
+- **Change:** the judge accepts `page` as evidence for the paged service, and for no other (a citation of the alert
+  that paged). The prompt says an alert often fires seconds into a fault, before metrics move: don't refute the paged
+  service because its metrics haven't moved yet, refute it when another service's own change explains the page (a
+  callee whose own signals fail) or it's an earlier incident; and mark the fault type found rather than refuting a
+  wrong guess. With patch 70, a wrong first guess no longer rules a service out.
+- **Risk, to be measured:** pages on a victim (frontend for paymentUnreachable and productCatalogFailure) may now be
+  accepted more often; the victim rule (failing client calls point to the callee) still applies. Capture 2 only (the
+  tuning recording); capture B and C untouched.

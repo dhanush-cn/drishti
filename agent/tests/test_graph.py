@@ -146,6 +146,18 @@ class Grounding(unittest.TestCase):
         r, info, _ = run([hyps(("frontend", "error", 0.6)), mark("supported", 0.8, ["candidates"]), hyps()])
         self.assertIsNone(r.diagnosis.root_cause_service, "frontend's row shows victim signs only")
 
+    def test_the_page_counts_for_the_paged_service_only(self):
+        # Patch 71: on capture 2 the page often came before the root cause's metrics moved (adHighCpu: ad's CPU
+        # 0.494 vs 0.468 at the alert); the alert itself is the paged service's own change.
+        r, _, _ = run([hyps(("frontend", "error", 0.6)), mark("supported", 0.8, ["page"])])
+        self.assertEqual(r.diagnosis.root_cause_service, "frontend")
+        self.assertEqual(r.diagnosis.evidence, [f"[page] frontend log_template_new opened at {ALERT['opened_at']}"])
+        r, info, _ = run([hyps(("product-catalog", "error", 0.6)), mark("supported", 0.9, ["page"]), hyps()])
+        self.assertIsNone(r.diagnosis.root_cause_service, "the page is not about another service")
+        self.assertIn("no cited evidence is about product-catalog", info["hypotheses"][0]["note"])
+        r, info, _ = run([hyps(("frontend", "error", 0.6)), mark("supported", 0.9, ["page"]), hyps()], alert=None)
+        self.assertIsNone(r.diagnosis.root_cause_service, "no page, nothing to cite (agent-only)")
+
     def test_unknown_ids_do_not_count(self):
         r, info, _ = run([hyps(("product-catalog", "error", 0.6)), mark("supported", 0.9, ["t99"]), hyps()])
         self.assertIsNone(r.diagnosis.root_cause_service)

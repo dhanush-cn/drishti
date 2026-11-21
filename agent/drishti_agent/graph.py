@@ -9,8 +9,8 @@
   judge (grounding, rule F4, budgets). The model proposes hypotheses and tests them with the query tools.
 - Every tool result gets an id ([t3]) that the model cites. The judge accepts a supported hypothesis only if a
   cited result is ABOUT that service: a per-service tool whose service argument is it, or its row in the overview
-  or the alerts, or its row in the candidate table. An overview mentions every service, so "the result mentions
-  it" would accept anything (second review).
+  or the alerts, or its row in the candidate table, or (for the paged service only) the page itself. An overview
+  mentions every service, so "the result mentions it" would accept anything (second review).
 - F4 (end-to-end only) is OFF by default since patch 69: on capture 2 and capture B its "own change" condition refused
   as many correct answers (5) as wrong ones (5), because at the first alert the root cause's own signal often hasn't
   crossed the thresholds yet; its earlier-incident condition never fired (docs/agent.md section 9). On (f4=True, the
@@ -125,6 +125,9 @@ def grounded(h: dict, tool_log: list[dict], pc: PageCheck) -> list[str]:
         if ref == "candidates":
             c = pc.get(h["service"])
             if c is not None and c.own_change:
+                ok.append(ref)
+        elif ref == "page":   # the alert is the paged service's own change (patch 71); about no other service
+            if pc.paged and norm(pc.paged) == norm(h["service"]):
                 ok.append(ref)
         elif ref in by_id and by_id[ref]["ok"] and about(by_id[ref], h["service"]):
             ok.append(ref)
@@ -388,6 +391,8 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         for ref in h["evidence"]:
             if ref == "candidates":
                 evidence.append(f"[candidates] {h['service']}: " + "; ".join(pc_of(state).get(h["service"]).own_change))
+            elif ref == "page":
+                evidence.append(f"[page] {alert['service']} {alert['rule']} opened at {alert['opened_at']}")
             else:
                 e = by_id[ref]
                 evidence.append(f"[{ref}] {e['name']} {json.dumps(e['arguments'], sort_keys=True)}: {e['text'][:200]}")

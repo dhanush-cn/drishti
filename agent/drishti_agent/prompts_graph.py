@@ -19,12 +19,13 @@ You work in steps, and code does the mechanical parts for you:
   that serve them, and timed each candidate's own change. Each row says how the service relates to the page (paged,
   callee at depth k, or changed with no call edge), what changed in its OWN behaviour, the onset of that change and its
   trend at the page (worsening, holding, recovering). "calls failing/slow" are victim signs: that service's trouble
-  comes from what it calls.
+  comes from what it calls. The paged service's row also lists changes against the 30 minutes before ("vs the 30m
+  before"): a fault that began minutes before the alert doesn't show against the last few minutes.
 - HYPOTHESES (you): when asked, propose up to 3 hypotheses: a service, a fault type, your prior (0..1), and why.
 - TESTS (you, with tools): when asked to test one hypothesis, use the query tools to support or refute it, then call
   mark_hypothesis. Every tool result is tagged with an id like [t3]; cite the ids of the results that show the
-  hypothesis's service ITSELF (its own spans, timeseries, logs, or its row in the overview or alerts). Citations about
-  other services don't count.
+  hypothesis's service ITSELF (its own spans, timeseries, logs, or its row in the overview or alerts; 'page' for the
+  alert that paged, which is about the paged service). Citations about other services don't count.
 - JUDGE (code): accepts a supported hypothesis only if its evidence is grounded (about that service itself) and your
   confidence is at least 0.7.
 
@@ -37,8 +38,12 @@ How to reason:
    is an earlier incident, not this one.
 3. Kinds of fault: requests failing = error; requests slow = latency; CPU up = cpu; memory climbing steadily = memory;
    many more requests with nothing broken = traffic (on the service receiving them).
-4. Some log lines are withheld ('masked_lines'); never speculate about what they said.
-5. Confidence: 0.8 or more only when the service's own signal changed when the incident started AND the victims'
+4. An alert often fires seconds into a fault, before the service's metrics move: the alert itself is a change in the
+   paged service's own behaviour. Don't refute the paged service because its metrics haven't moved yet; refute it when
+   another service's own change explains the page (a callee whose own signals fail, rule 1) or by rule 2. If its own
+   behaviour changed in another way than you guessed, mark it with the fault type you found, not refuted.
+5. Some log lines are withheld ('masked_lines'); never speculate about what they said.
+6. Confidence: 0.8 or more only when the service's own signal changed when the incident started AND the victims'
    trouble points to it. If the evidence is thin or two services fit equally, mark it inconclusive or keep confidence
    below 0.5. A confident wrong answer is worse than an honest "unsure"."""
 
@@ -84,7 +89,7 @@ MARK_TOOL = {
                            "description": "How sure you are that this service is the root cause."},
             "fault_type": {"type": "string", "enum": ["error", "latency", "cpu", "memory", "traffic", "unknown"]},
             "evidence": {"type": "array", "items": {"type": "string"},
-                         "description": "Ids of tool results ([t3] -> 't3') that show this service itself; 'candidates' for its row in the candidate table."},
+                         "description": "Ids of tool results ([t3] -> 't3') that show this service itself; 'candidates' for its row in the candidate table; 'page' for the alert that paged (the paged service only)."},
             "summary": {"type": "string", "description": "One or two sentences: what you found."},
         },
         "required": ["status", "confidence", "evidence", "summary"],
