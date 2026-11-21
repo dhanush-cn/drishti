@@ -60,6 +60,11 @@ TEST = """Test this hypothesis: {hid}: {service} ({fault_type}), prior {prior}. 
 You have {left} tool calls for it ({total_left} left in the whole investigation). Look at {service} itself first. When you
 know, call mark_hypothesis on its own (not in the same turn as other tool calls), citing the [t..] ids that show it."""
 
+RECHECK = """Second look, {minutes} min after the first (now {until}). The triage and the candidate table above are new. At
+the first look no hypothesis was confirmed; an alert often fires seconds into a fault, before the root cause's own signals
+move. {changed} A hypothesis refuted at the first look may be proposed again if its service's own signal has changed since.
+You have {tools} tool calls and {calls} model calls for this second look."""
+
 SUBMIT_HYPOTHESES_TOOL = {
     "name": "submit_hypotheses",
     "description": "Propose up to 3 untested hypotheses, best first. An empty list means nothing is left worth testing.",
@@ -97,4 +102,4 @@ MARK_TOOL = {
 }
 
 GRAPH_PROMPT_VERSION = hashlib.sha256("\x00".join([GRAPH_SYSTEM, BRIEFING_PAGED, BRIEFING_UNPAGED, HYPOTHESIZE, TEST,
-                                                    repr(SUBMIT_HYPOTHESES_TOOL), repr(MARK_TOOL)]).encode()).hexdigest()[:12]
+                                                    repr(SUBMIT_HYPOTHESES_TOOL), repr(MARK_TOOL), RECHECK]).encode()).hexdigest()[:12]

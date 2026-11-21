@@ -227,7 +227,9 @@ def create_app(deps: Deps):
         """Run (or resume) an investigation in this thread, storing every event."""
         with running:
             api = api_factory(cfg.queryapi, inv["until"])
+            # Live investigations look again 2 minutes after the page when the first look ends unsure (patch 76).
             kw = dict(thread_id=inv["id"], remediation=rem, extras=extras + ([mem.extra(inv["alert"])] if mem else []),
+                      recheck_minutes=graph.RECHECK_MINUTES, live_wait=True,
                       local_tools=tools)
             evs = []
             try:

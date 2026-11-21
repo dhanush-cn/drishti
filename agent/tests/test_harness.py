@@ -91,6 +91,19 @@ class Harness(unittest.TestCase):
         meta = json.loads((Path(out) / "summary.json").read_text())["meta"]
         self.assertEqual((meta["label"], len(meta["graph_prompt_version"])), ("no-rb", 12))
 
+    def test_recheck_setting_reaches_the_graph_and_the_report(self):
+        seen = []
+        real = runner.graph.investigate
+        def spy(*a, **k):
+            seen.append(k.get("recheck_minutes"))
+            return real(*a, **k)
+        with mock.patch.object(runner.graph, "investigate", spy):
+            _, _, out = self.run_(ByContent(self.log))
+            self.assertEqual(json.loads((Path(out) / "summary.json").read_text())["meta"]["recheck_minutes"], 2.0)
+            self.run_(ByContent(self.log), "--recheck-minutes", "off")
+            self.run_(ByContent(self.log), "--recheck-minutes", "0")
+        self.assertEqual(seen, [2.0, 2.0, None, None, 0.0, 0.0], "default 2 min; off; the +0 control")
+
     def test_resume_skips_finished_cells(self):
         self.run_(ByContent(self.log))
         n = calls(self.log)

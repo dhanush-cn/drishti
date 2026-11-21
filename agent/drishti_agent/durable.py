@@ -123,6 +123,10 @@ def events_for(node: str, update: dict, state: dict) -> list[dict]:
                                                          "summary": _summary(e["text"])} for e in update["tool_log"][prev:]]})
     elif node == "judge":
         out.append({"type": "judge", "verdict": (update.get("verdicts") or [""])[-1], "next": update.get("next")})
+    elif node == "recheck":
+        r = update.get("recheck") or {}
+        out.append({"type": "recheck", "until": r.get("until"), "minutes": r.get("minutes"), "changed": r.get("changed"),
+                    "waited_s": r.get("waited_s")})
     elif node in ("report", "unsure", "error"):
         out.append({"type": "diagnosis", "diagnosis": update.get("diagnosis"), "valid": update.get("valid")})
     elif node == "propose":
@@ -139,7 +143,7 @@ def events_for(node: str, update: dict, state: dict) -> list[dict]:
 def stream(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, thread_id: Optional[str] = None,
            budget: int = graph.DEFAULT_BUDGET, f4: bool = False, pc_cap: int = graph.DEFAULT_CAP, extras=None,
            local_tools=None, crash: Optional[str] = None, crash_mode: str = "exit", remediation=None,
-           resume: Optional[dict] = None):
+           resume: Optional[dict] = None, recheck_minutes: Optional[float] = None, live_wait: bool = False):
     """Run, resume, or replay a finished investigation, yielding events as steps finish. The last event is
     {"type": "end", "state": <state>}. A finished investigation yields only its diagnosis and end. With remediation,
     a run pauses at the approval: it yields "awaiting_approval" and ends; stream again with resume={"approve": bool,
@@ -147,7 +151,8 @@ def stream(api: QueryAPI, llm, checkpointer, alert: Optional[dict] = None, *, th
     tid = thread_id or investigation_id(alert, api.until)
     hook = crash_point(crash if crash is not None else os.environ.get(CRASH_ENV), crash_mode)
     g = graph.build_graph(api, traced(llm), budget, alert, f4=f4, pc_cap=pc_cap, extras=extras, checkpointer=checkpointer,
-                          after_node=hook, local_tools=local_tools, remediation=remediation, thread_id=tid)
+                          after_node=hook, local_tools=local_tools, remediation=remediation, thread_id=tid,
+                          recheck_minutes=recheck_minutes, live_wait=live_wait)
     config = {"configurable": {"thread_id": tid}, "recursion_limit": graph.RECURSION_LIMIT}
     yield {"type": "start", "thread_id": tid, "alert": alert, "until": api.until}
     snap = g.get_state(config)

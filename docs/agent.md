@@ -335,7 +335,7 @@ refuted ad and recommendation and left payment (paymentFailure) inconclusive.
   tuning recording); capture B and C untouched.
 - Measured after this change: docs/evals.md section 8.
 
-## 11. The stale-change guard, G3′ (patch 75: the rule and its ceiling check; not in the judge yet)
+## 11. The stale-change guard, G3′ (patch 75: the rule and its ceiling check; failed it, dropped, never in the judge)
 
 On capture 2 (21 Nov) both confidently-wrong end-to-end answers named a service whose change had already ended before
 the page started: ad for productCatalogLockContention (ad's p95 spike was the previous scenario, back to normal two
@@ -360,3 +360,36 @@ Patch 77 puts it in the judge (end-to-end only): a stale answer is sent back onc
 unsure. Only if the ceiling check passes: `rulecheck --stale` must reject **0 labelled answers on capture 2 and on capture
 B**, at the trigger and two minutes later (the Week 7 recheck), and it reports how many committed wrong answers in past
 results files it would have caught (docs/evals.md section 9).
+
+**Measured 21 Nov, and dropped.** The ceiling check rejected 3 labelled answers on capture 2 and 3 on capture B (the
+condition was 0 on each; docs/evals.md section 9). Four of the six were the same service causing the previous scenario
+too (product-catalog for productCatalogFailure after LockContention, on both captures; payment for paymentUnreachable
+after paymentFailure; frontend-proxy carrying scenario 9's errors), so its old change looked stale before its new fault
+showed; one was a single-point run 30 minutes earlier (ad on capture B). It caught 2 of 9 past confidently-wrong answers
+on capture 2 and 2 of 8 on capture B, one of them through noise, and not the LockContention "ad" answer (ad's CPU was
+still raised at the page). Rescuing it would mean a new rule chosen after seeing these labels (a minimum run length,
+"same service as the last incident"), which is tuning; it was dropped instead. `stale_change` stays as a measuring tool
+in rulecheck.
+
+## 12. The second look (patch 76, Week 7 design G2)
+
+End-to-end only, on by default in the evals (`--recheck-minutes 2`) and in the live service: when the first look is about
+to end unsure, the investigation looks again two minutes after the page instead.
+
+- **Why:** on capture 2 four of the five end-to-end misses came 5-39 s into a fault, before the root cause's own signal
+  moved, and the same graph was 10/10 a few minutes later (agent-only). The ceiling check (patch 75) found the labelled
+  service in the candidate table with its own change at the page in 2 of 10 scenarios (capture B 4 of 9), and two
+  minutes later in 10 of 10 (8 of 9), never past flag-off.
+- **What it does:** triage and page_check again at `until + 2 min`; one more round of hypotheses with a fresh, smaller
+  budget (6 tool calls, 6 model calls); the first look's hypotheses stay on the board. The model is told what changed: the
+  services with an own change that wasn't there at the first look. A first-look hypothesis about such a service may be
+  proposed again (same service and fault type); one about a service that didn't change may not. Still unsure: unsure.
+- **Never:** after a committed answer (so it can't turn a right answer wrong, and it can't reach a confidently wrong one:
+  on capture 2 the two confidently-wrong end-to-end answers stay out of its reach, so end-to-end tops out near 8/10),
+  agent-only (no page), twice, or after a model error.
+- **Live:** the node sleeps until the page + 2 min, computed from the saved first look, so a crash during the wait resumes
+  only the rest of it (tested). In replay it only moves the query API's `until`; the `until` guarantee holds. The wait is
+  part of time to diagnosis (the state's `recheck` record; patch 79 reports it).
+- **Controls:** `--recheck-minutes off` (no second look) and `--recheck-minutes 0` (the same extra round at the page's
+  moment: separates more time from more calls).
+- The prompts changed (the second look's message), so GRAPH_PROMPT_VERSION changed; the Week 5 prompts didn't.
