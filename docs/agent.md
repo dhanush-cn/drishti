@@ -333,3 +333,4 @@ refuted ad and recommendation and left payment (paymentFailure) inconclusive.
 - **Risk, to be measured:** pages on a victim (frontend for paymentUnreachable and productCatalogFailure) may now be
   accepted more often; the victim rule (failing client calls point to the callee) still applies. Capture 2 only (the
   tuning recording); capture B and C untouched.
+- Measured after this change: docs/evals.md section 8.

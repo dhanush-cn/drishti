@@ -440,3 +440,41 @@ rows `graph:<label>` / `agent:<label>`):
 - **Freeze:** `FROZEN.json` now records the graph's prompt version too, and `--held-out` refuses graph runs whose
   prompts aren't frozen or have changed. The Week 5 freeze file has no graph version, so the held-out capture C run
   needs a new freeze after Week 7's tuning, as planned.
+
+## 8. Week 6 measured (21 Nov 2026)
+
+Internal, provisional: replayed recordings of the OTel Demo on one laptop, 1 run per cell. A difference of one
+scenario is within the noise of a single run; Week 7 repeats runs before any number is presented.
+
+**Capture 2 (the tuning recording), graph, full variant (runbooks, memory from capture B), F4 off, page_check cap 12,
+10 scenarios scored.** Before = graph prompts `586e21b83481`; after = patches 70-71, `3213caa16cbc`.
+
+| | agent-only top-1 | end-to-end top-1 | end-to-end unsure / confidently wrong |
+|---|---|---|---|
+| Gemini 3.5 Flash-Lite, after | **10/10** | **5/10** | 3 / 2 |
+| Gemini 3.5 Flash-Lite, before | 8/10 | 4/10 | 5 / 1 |
+| Qwen 2.5 7B (Ollama), after | 4/10 | 5/10 | 2 / 3 |
+| Qwen 2.5 7B (Ollama), before | 5/10 | 3/10 | 4 / 3 |
+| Week 5 agent, frozen (Gemini, section 6) | 8/10 | 5/10 | |
+
+- End-to-end stays below the floor that repeats the alert (7/10 on capture 2). Gemini still refutes ad in adHighCpu
+  end-to-end (its log spike read as informational); imageSlowLoad end-to-end turned from unsure to wrong.
+- The after run spread over two days of free quota (`--resume`, 15 cells kept).
+
+**Capture C (held out): fault gate and leak check only, no agent and no model.** 11 of 13 scenarios scored (not
+scored: cartFailure, 1 error; intlShippingSlowdown, p95 43.5 ms vs 180 ms). Leak check: 13 scenarios, 754 responses,
+33,016 masked lines, 0 leaks.
+
+**Live, once (week6.sh live): the whole loop on the running demo, Gemini 3.5 Flash-Lite.** productCatalogFailure
+switched on after a 15-minute warm-up (the detector judges nothing before 10 minutes of a service's history; a first
+attempt with 5 minutes produced no alert).
+
+| Step | Measured |
+|---|---|
+| alert | 31 s after the flag: `span_errors` on frontend, SERVER `GET /api/recommendations` (a victim) |
+| diagnosis | product-catalog, error, confidence 0.85, accepted by the judge; proposal `rollback_config` on product-catalog, 27 s after the investigation started |
+| approval | by Dhanush, through the API |
+| action | 1 flag turned off: productCatalogFailure |
+| recovery | product-catalog's server error ratio back within the threshold of its pre-incident reference (0) for 4 checks in a row, 30 s apart; confirmed 180 s after the action (7 checks) |
+
+One live run shows the loop works end to end; it is not an accuracy measurement.
