@@ -1,10 +1,184 @@
 {
+ "version": 2,
  "prompt_version": "40abe73ebe28",
- "git_commit": "24f3158",
+ "graph_prompt_version": "011b9a0338f5",
+ "code_hash": "8b38bbf46ec01a68",
+ "git_commit": "7349793",
+ "git_tree": "b7b8783b224251085bf6692a765f87378774b9ad",
+ "model": "openai-compat:gemini-3.5-flash-lite",
+ "variants": {
+  "graph": {
+   "systems": "graph",
+   "label": "",
+   "recheck_minutes": 2.0,
+   "budget": 12,
+   "pagecheck_cap": 12,
+   "f4": false,
+   "runbooks": true,
+   "memory_from": "",
+   "columns": "agent-only,end-to-end",
+   "floor": false,
+   "inject": ""
+  },
+  "v0": {
+   "systems": "agent",
+   "label": "",
+   "recheck_minutes": null,
+   "budget": 12,
+   "pagecheck_cap": null,
+   "f4": false,
+   "runbooks": false,
+   "memory_from": "",
+   "columns": "agent-only,end-to-end",
+   "floor": false,
+   "inject": ""
+  },
+  "baseline": {
+   "systems": "baseline",
+   "label": "",
+   "recheck_minutes": null,
+   "budget": 12,
+   "pagecheck_cap": null,
+   "f4": false,
+   "runbooks": false,
+   "memory_from": "",
+   "columns": "agent-only,end-to-end",
+   "floor": false,
+   "inject": ""
+  },
+  "floor": {
+   "systems": "agent",
+   "label": "",
+   "recheck_minutes": null,
+   "budget": 12,
+   "pagecheck_cap": null,
+   "f4": false,
+   "runbooks": false,
+   "memory_from": "",
+   "columns": "agent-only,end-to-end",
+   "floor": true,
+   "inject": ""
+  },
+  "no-recheck": {
+   "systems": "graph",
+   "label": "no-recheck",
+   "recheck_minutes": null,
+   "budget": 12,
+   "pagecheck_cap": 12,
+   "f4": false,
+   "runbooks": true,
+   "memory_from": "",
+   "columns": "end-to-end",
+   "floor": false,
+   "inject": ""
+  },
+  "no-rb": {
+   "systems": "graph",
+   "label": "no-rb",
+   "recheck_minutes": 2.0,
+   "budget": 12,
+   "pagecheck_cap": 12,
+   "f4": false,
+   "runbooks": false,
+   "memory_from": "",
+   "columns": "agent-only,end-to-end",
+   "floor": false,
+   "inject": ""
+  },
+  "recheck0": {
+   "systems": "graph",
+   "label": "recheck0",
+   "recheck_minutes": 0.0,
+   "budget": 12,
+   "pagecheck_cap": 12,
+   "f4": false,
+   "runbooks": true,
+   "memory_from": "",
+   "columns": "end-to-end",
+   "floor": false,
+   "inject": ""
+  },
+  "mem": {
+   "systems": "graph",
+   "label": "mem",
+   "recheck_minutes": 2.0,
+   "budget": 12,
+   "pagecheck_cap": 12,
+   "f4": false,
+   "runbooks": true,
+   "memory_from": "capture-2,capture-b",
+   "columns": "agent-only,end-to-end",
+   "floor": false,
+   "inject": ""
+  },
+  "b20": {
+   "systems": "agent",
+   "label": "b20",
+   "recheck_minutes": null,
+   "budget": 20,
+   "pagecheck_cap": null,
+   "f4": false,
+   "runbooks": false,
+   "memory_from": "",
+   "columns": "agent-only,end-to-end",
+   "floor": false,
+   "inject": ""
+  }
+ },
+ "variant_sets": {
+  "graph": {
+   "set": "first",
+   "runs": 3
+  },
+  "v0": {
+   "set": "first",
+   "runs": 3
+  },
+  "baseline": {
+   "set": "first",
+   "runs": 3
+  },
+  "floor": {
+   "set": "first",
+   "runs": 3
+  },
+  "no-recheck": {
+   "set": "first",
+   "runs": 1
+  },
+  "no-rb": {
+   "set": "first",
+   "runs": 1
+  },
+  "recheck0": {
+   "set": "extra",
+   "runs": 1
+  },
+  "mem": {
+   "set": "extra",
+   "runs": 1
+  },
+  "b20": {
+   "set": "extra",
+   "runs": 1
+  }
+ },
+ "caps": {
+  "model_tool_calls": 12,
+  "pagecheck_calls": 12,
+  "rounds": 3,
+  "llm_calls": 15,
+  "recheck_tools": 6,
+  "recheck_llm_calls": 6
+ },
+ "recheck_minutes": 2.0,
+ "f4": false,
+ "memory_from": "capture-2,capture-b",
+ "prices_sha256": "d4ee601d01a4e80f",
  "tuned_on": "capture-2",
  "hosted_check": {
   "model": "openai-compat:gemini-3.5-flash-lite",
-  "dir": "/mnt/c/Users/Dhanush/Downloads/drishti-week5/results/capture-2/hosted"
+  "dir": "/mnt/c/Users/Dhanush/Downloads/drishti-week6/week7/results/capture-2/graph-hosted-011b9a0338f5"
  },
- "frozen_at": "2026-11-19T09:13:13Z"
+ "frozen_at": "2026-11-21T16:39:36Z"
 }
