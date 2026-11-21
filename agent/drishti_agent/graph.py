@@ -27,6 +27,12 @@
   10 of 10 scenarios (capture B: 8 of 9; rulecheck, 21 Nov). A committed answer is never rechecked, and there is no
   second recheck. In replay the moment just moves (the query API's `until`); live (live_wait) the node sleeps until the
   first look + recheck_minutes, computed from the saved state, so a crash during the wait resumes the rest of it.
+- The second look's order (patch 81, Week 7 change 2): its few calls go first to what changed. Open first-look
+  hypotheses about services whose own signal did NOT change are closed ("not tested: superseded by the second look"),
+  and the next hypothesis to test is the paged service's if it changed, then other changed services', then the rest, by
+  prior within each. Why: in check 1 (capture 2, 21 Nov) both second looks that stayed unsure spent their 6 model calls on
+  a leftover or lower-ranked hypothesis and ran out before testing the service whose own signal had just changed (the
+  page, frontend-proxy, in imageSlowLoad; product-catalog in productCatalogFailure).
 
 State is plain data, one model turn per step, so a checkpointer can save it between steps (patch 61).
 """
@@ -151,6 +157,19 @@ def grounded(h: dict, tool_log: list[dict], pc: PageCheck) -> list[str]:
         elif ref in by_id and by_id[ref]["ok"] and about(by_id[ref], h["service"]):
             ok.append(ref)
     return ok
+
+
+def next_to_test(open_hyps: list[dict], recheck: Optional[dict], paged: Optional[str]) -> str:
+    """The id of the next hypothesis to test: the highest prior; at the second look, what changed first (patch 81)."""
+    if not recheck:
+        return max(open_hyps, key=lambda h: h["prior"])["id"]
+    changed = {norm(s) for s in recheck.get("changed") or []}
+    p = norm(paged) if paged else None
+
+    def rank(h) -> int:
+        s = norm(h["service"])
+        return 0 if (s == p and s in changed) else (1 if s in changed else 2)
+    return min(open_hyps, key=lambda h: (rank(h), -h["prior"]))["id"]
 
 
 def _f(x, default=0.0) -> float:
@@ -289,7 +308,7 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         if not new:
             return {**base, "hypotheses": hyps, "hyp_nudges": 0, "next": "unsure",
                     "verdicts": state["verdicts"] + [f"round {rnd}: no untested hypothesis left"]}
-        cur = max(new, key=lambda h: h["prior"])["id"]
+        cur = next_to_test(new, state.get("recheck"), alert and alert.get("service"))
         return {**base, "hypotheses": hyps, "hyp_nudges": 0, "current": cur, "msgs": [], "hyp_used": 0, "nudges": 0, "next": "test"}
 
     def test_model_node(state: State) -> dict:
@@ -403,7 +422,7 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         budget_left = state["used"] < cap(state) and not out_of_calls(state)
         opened = [x for x in hyps if x["status"] == "open"]
         if opened and budget_left:
-            cur = max(opened, key=lambda x: x["prior"])["id"]
+            cur = next_to_test(opened, state.get("recheck"), alert and alert.get("service"))
             return {"hypotheses": hyps, "refusals": refusals, "verdicts": verdicts, "current": cur, "msgs": [],
                     "hyp_used": 0, "nudges": 0, "next": "test"}
         if state["round"] < state.get("max_rounds", MAX_ROUNDS) and budget_left:
@@ -482,6 +501,11 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         pc = page_check(qapi, alert, cap=pc_cap)
         pc_holder.update(pc=pc, until=until)
         changed = [c.service for c in pc.candidates if c.own_change and not before.get(norm(c.service))]
+        # Leftovers about services that didn't change don't get the second look's few calls (patch 81).
+        moved = {norm(s) for s in changed}
+        hyps = [dict(h, status="inconclusive", note="not tested: superseded by the second look")
+                if h["status"] == "open" and norm(h["service"]) not in moved else h for h in state["hypotheses"]]
+        superseded = [h["id"] for h, old in zip(hyps, state["hypotheses"]) if h is not old]
         info = {"minutes": recheck_minutes, "until": until, "changed": changed, "waited_s": waited,
                 "llm_calls_before": state["llm_calls"], "tools_before": state["used"],
                 "pagecheck_calls_first": state["pc"].get("calls", 0)}
@@ -490,7 +514,8 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         context = (f"{briefing(until, alert)}\n\nTriage at that moment:\n\n{triage(qapi, alert)}"
                    f"\n\n## candidates (code: call-graph walk from the page)\n{pc.table()}"
                    f"\n\n{RECHECK.format(minutes=f'{recheck_minutes:g}', until=until, changed=note, tools=RECHECK_TOOLS, calls=RECHECK_LLM_CALLS)}")
-        return {"until": until, "pc": pc.to_json(), "context": context, "recheck": info,
+        info["superseded"] = superseded
+        return {"until": until, "pc": pc.to_json(), "context": context, "recheck": info, "hypotheses": hyps,
                 "cap_tools": state["used"] + RECHECK_TOOLS, "cap_llm": state["llm_calls"] + RECHECK_LLM_CALLS,
                 "max_rounds": state["round"] + 1, "current": None, "msgs": [], "hyp_used": 0, "nudges": 0, "hyp_nudges": 0,
                 "budget_exhausted": False, "next": "hypothesize",

@@ -421,3 +421,14 @@ template and an alert, and the agent reads both. What limits the damage is struc
 
 What the structure can't stop is a wrong diagnosis: an injected line could talk the model into naming the wrong
 service, which a person would then be asked to approve. The guardrail eval measures that (docs/evals.md section 10).
+
+**The second look's order (patch 81, Week 7 change 2).** Check 1 on capture 2 (21 Nov): end-to-end 7/10 (Week 6 5/10);
+the second look fired 4 times and fixed 2 (adHighCpu, recommendationCacheFailure). The other two stayed unsure for one
+new reason: the second look's 6 model calls went to a hypothesis left over from the first look or a lower-ranked one,
+and ran out before the service whose own signal had just changed was tested (the page, frontend-proxy, in
+imageSlowLoad; product-catalog in productCatalogFailure). In both the first look had used all 15 model calls. Now, at
+the second look, open first-look hypotheses about services that didn't change are closed ("not tested: superseded by the
+second look"), and the next hypothesis tested is the paged service's if it changed, then other changed services', then
+the rest, by prior within each (`next_to_test`). The model is told so (one line; GRAPH_PROMPT_VERSION changes). No extra
+calls. This was the last change before the freeze (design G1: one more change for a new failure class, its check, then
+freeze whatever it scores).

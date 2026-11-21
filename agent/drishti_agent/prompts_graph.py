@@ -63,6 +63,7 @@ know, call mark_hypothesis on its own (not in the same turn as other tool calls)
 RECHECK = """Second look, {minutes} min after the first (now {until}). The triage and the candidate table above are new. At
 the first look no hypothesis was confirmed; an alert often fires seconds into a fault, before the root cause's own signals
 move. {changed} A hypothesis refuted at the first look may be proposed again if its service's own signal has changed since.
+Hypotheses about services whose own signal changed since the first look are tested first.
 You have {tools} tool calls and {calls} model calls for this second look."""
 
 SUBMIT_HYPOTHESES_TOOL = {
