@@ -435,6 +435,15 @@ rows `graph:<label>` / `agent:<label>`):
   outlasts its waits stops the run with exit code 3 instead of recording a string of failures: rerun the same command
   with `--resume` the next day. This is how the capture C score fits the free tier (design §11: about 2,300 requests,
   about 5 days of quota).
+- **Request ledger and daily cap** (patch 74, `--ledger FILE` or `$DRISHTI_LEDGER`): every model request is appended
+  to the ledger (time, model, cell, tokens, status, failed requests included; USD at the given prices, what it would
+  cost on a paid tier), and before each request the day's count for that model is summed from the file. At
+  `--max-requests-per-day` (default 450, below the free tier's 500) the request is refused and the run stops like a rate
+  limit (exit 3, `--resume` continues); a cell that can't make its first request isn't started. The day runs from 08:00
+  UTC (13:30 IST, the free tier's reset). `python -m drishti_agent.evals.quota --ledger FILE` prints the day's totals.
+  Why: on 21 Nov the free quota ran out although our runs had counted 148 + 61 requests (something else used the key),
+  and nothing on our side could say how much we had used. Capture C is scored on the free tier only, from a project with
+  no billing account, over several days.
 - **Fix on target** (would the proposed fix target a labelled service) is recorded per graph row and shown in the
   per-scenario table. It equals top-1 except for unsure, so it is not presented as a separate result.
 - **Freeze:** `FROZEN.json` now records the graph's prompt version too, and `--held-out` refuses graph runs whose

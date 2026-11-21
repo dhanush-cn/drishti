@@ -8,6 +8,9 @@ fault gate, then K runs of each system (agent, baseline) per column. Writes
 runs.jsonl (every run with its transcript), scenarios.json, summary.json and
 RESULTS.md.
 
+--ledger (or $DRISHTI_LEDGER) records every model request and stops the run at a daily cap of requests per model
+(patch 74, drishti_agent.ledger): like a rate limit that outlasted its waits, rerun with --resume.
+
 --held-out marks the final scoring of a recording that was never used for
 tuning (capture B). It refuses to run unless the prompts match the version
 recorded by `python -m drishti_agent.evals.freeze` (FROZEN.json), so the
@@ -26,6 +29,7 @@ from pathlib import Path
 
 from .. import agent, baseline, graph, tracing
 from ..api import QueryAPI
+from ..ledger import DEFAULT_MAX_REQUESTS, CapReached, Ledger, Metered
 from ..llm import from_args
 from ..pagecheck import DEFAULT_CAP
 from ..prompts import PROMPT_VERSION
@@ -74,6 +78,9 @@ def main(argv=None) -> int:
     ap.add_argument("--rpm", type=float, default=0.0, help="pace model requests to this many per minute (free tiers); 0 = no pacing")
     ap.add_argument("--reasoning-effort", default="", help="passed to OpenAI-compatible APIs (thinking models), e.g. low")
     ap.add_argument("--max-tokens", type=int, default=2048, help="output cap per model call (thinking models may need more)")
+    ap.add_argument("--ledger", default=os.environ.get("DRISHTI_LEDGER", ""),
+                    help="request ledger file (default $DRISHTI_LEDGER): every model request recorded, a daily cap enforced")
+    ap.add_argument("--max-requests-per-day", type=int, default=DEFAULT_MAX_REQUESTS, help="ledger cap, per model per ledger day")
     ap.add_argument("--held-out", action="store_true", help="final scoring of an untouched recording: requires FROZEN.json")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
@@ -105,11 +112,13 @@ def main(argv=None) -> int:
         scenarios = [s for s in scenarios if s.flag in keep]
     llm = from_args(a.provider, a.model, a.base_url, a.api_key_env or ("ANTHROPIC_API_KEY" if a.provider == "anthropic" else ""), a.temperature,
                     rpm=a.rpm, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens)
+    if a.ledger and a.provider != "heuristic":   # the floor makes no model request
+        llm = Metered(llm, Ledger(a.ledger, getattr(llm, "name", a.model), a.price_in, a.price_out, a.max_requests_per_day))
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,
             "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": a.f4, "pagecheck_cap": a.pagecheck_cap,
             "runbooks": bool(a.runbooks_postgres), "memory_from": a.memory_from if a.memory_postgres else "", "label": a.label,
             "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature, "rpm": a.rpm, "reasoning_effort": a.reasoning_effort, "max_tokens": a.max_tokens,
-            "price_in": a.price_in, "price_out": a.price_out, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            "price_in": a.price_in, "price_out": a.price_out, "ledger": a.ledger, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     print(json.dumps(meta))
 
     for sc in scenarios:
@@ -156,6 +165,14 @@ def main(argv=None) -> int:
                     for k in range(a.runs):
                         if stopped or (label_of(sysname), sc.n, col, k) in done:
                             continue
+                        if isinstance(llm, Metered) and sc.gate_passed and until is not None:
+                            try:
+                                llm.ledger.check()   # don't start a cell the caps won't let finish its first request
+                            except CapReached as e:
+                                stopped = str(e)
+                                print(f"stopping: {e}. Rerun the same command with --resume to continue.", flush=True)
+                                continue
+                            llm.cell = f"{label_of(sysname)}/{sc.flag}/{col}/{k}"
                         row = {"scenario": sc.n, "flag": sc.flag, "column": col, "system": label_of(sysname), "run": k,
                                "gate_passed": sc.gate_passed, "until": iso(until) if until else None}
                         if not sc.gate_passed:
@@ -191,7 +208,7 @@ def main(argv=None) -> int:
                         f.write(json.dumps(row) + "\n")
                         f.flush()
                         if stopped:
-                            print(f"stopping: the provider's limit outlasted its waits ({stopped[:120]}). "
+                            print(f"stopping: {'the daily cap' if 'ledger cap' in stopped else 'the provider' + chr(39) + 's limit outlasted its waits'} ({stopped[:120]}). "
                                   "Rerun the same command with --resume to continue.", flush=True)
     tracing.flush()  # LangSmith, when on: send buffered traces before the process exits
     meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
