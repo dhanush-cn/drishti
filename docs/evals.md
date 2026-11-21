@@ -534,3 +534,28 @@ rank), and how many runs took a second look. USD comes from `agent/prices.json` 
 line: Gemini 3.5 Flash-Lite at $0.30 / $2.50 per million tokens in / out, as listed by pages citing ai.google.dev on 21
 Nov (to confirm before quoting). The eval project has no billing account, so nothing is charged: the column says what a
 run would cost on a paid tier.
+
+## 11. The Week 7 freeze and the capture C variant set (patch 80)
+
+`python -m drishti_agent.evals.freeze --tuned-on capture-2 --hosted-check <graph run>` writes `agent/FROZEN.json`
+version 2: the v0 and graph prompt versions, a hash of every file under `agent/drishti_agent` (code, prompts, runbooks),
+the git commit and tree, the model, the variant set with each variant's settings, the caps, the second look's delay,
+the memory sources and the price file's hash. It refuses without the hosted model's graph run of the current prompts with
+the second look at 2 min, and with uncommitted changes to tracked files. `--held-out` then refuses a cell whose prompts,
+code hash, model (the floor aside) or settings don't match a frozen variant, and a Week 5 (version 1) file.
+
+The variant set (`python -m drishti_agent.evals.variants --set first|extra`), option B (free tier only):
+
+| Variant | Set | Runs | Isolates |
+|---|---|---|---|
+| graph (runbooks, no memory, second look at 2 min, F4 off) | first | 3 | the headline |
+| v0 | first | 3 | design vs a plain tool loop |
+| baseline | first | 3 | tools at all |
+| floor (`--floor`) | first | 3 | the deterministic reference |
+| no-recheck (end-to-end) | first | 1 | the second look's effect |
+| no-rb | first | 1 | the runbooks' effect |
+| recheck0 (end-to-end) | extra | 1 | more time vs more calls |
+| mem | extra | 1 | memory, the best case for recurring incidents |
+| b20 | extra | 1 | design vs query budget |
+
+"extra" runs only with quota left after the first set; a control that doesn't run is reported as not run.

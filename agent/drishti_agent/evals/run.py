@@ -63,7 +63,28 @@ def git_commit() -> str:
         return "unknown"
 
 
-def main(argv=None) -> int:
+def code_hash() -> str:
+    """sha256 of the agent's code and data (every file under agent/drishti_agent but caches), by path and content.
+    Independent of git, FROZEN.json and the docs, so committing the freeze doesn't change it (patch 80)."""
+    import hashlib
+    root = Path(__file__).resolve().parents[1]
+    h = hashlib.sha256()
+    for p in sorted(root.rglob("*")):
+        if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc":
+            h.update(str(p.relative_to(root)).encode() + b"\x00" + p.read_bytes() + b"\x00")
+    return h.hexdigest()[:16]
+
+
+def settings_signature(a) -> dict:
+    """The settings that make a run one variant and not another (patch 80; evals/variants.py)."""
+    from .variants import signature
+    recheck = None if a.recheck_minutes.strip().lower() == "off" else float(a.recheck_minutes)
+    return signature(systems=a.systems, label=a.label, recheck_minutes=recheck, budget=a.budget, pagecheck_cap=a.pagecheck_cap,
+                     f4=a.f4, runbooks=bool(a.runbooks_postgres), memory_from=a.memory_from if a.memory_postgres else "",
+                     columns=a.columns, floor=a.floor, inject=a.inject)
+
+
+def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--api", required=True, help="query API over the eval database")
     ap.add_argument("--timeline", required=True)
@@ -99,13 +120,22 @@ def main(argv=None) -> int:
                     help="request ledger file (default $DRISHTI_LEDGER): every model request recorded, a daily cap enforced")
     ap.add_argument("--max-requests-per-day", type=int, default=DEFAULT_MAX_REQUESTS, help="ledger cap, per model per ledger day")
     ap.add_argument("--held-out", action="store_true", help="final scoring of an untouched recording: requires FROZEN.json")
+    ap.add_argument("--floor", action="store_true", help="the deterministic floor (repeat the alert / top changed service) "
+                    "instead of a model: overrides --provider and --model, needs --systems agent")
     ap.add_argument("--out", required=True)
-    a = ap.parse_args(argv)
+    return ap
+
+
+def main(argv=None) -> int:
+    a = parser().parse_args(argv)
+    if a.floor:
+        a.provider, a.model = "heuristic", "floor"
     recheck = None if a.recheck_minutes.strip().lower() == "off" else float(a.recheck_minutes)
     if a.inject and a.held_out:
         print("refusing --inject with --held-out: the injection fixture is for capture 2 only", file=sys.stderr)
         return 2
 
+    frozen = None
     if a.held_out:
         if not FROZEN.exists():
             print("refusing --held-out: no FROZEN.json (run python -m drishti_agent.evals.freeze first)", file=sys.stderr)
@@ -117,6 +147,18 @@ def main(argv=None) -> int:
         if "graph" in a.systems.split(",") and frozen.get("graph_prompt_version") != GRAPH_PROMPT_VERSION:
             print(f"refusing --held-out: graph prompts not frozen or changed ({frozen.get('graph_prompt_version')} -> {GRAPH_PROMPT_VERSION})",
                   file=sys.stderr)
+            return 2
+        # Week 7 freeze (patch 80): the code and the variant are frozen too, not only the prompts.
+        if frozen.get("version") != 2:
+            print("refusing --held-out: FROZEN.json predates the Week 7 freeze (no code hash or variant set): freeze again", file=sys.stderr)
+            return 2
+        if frozen["code_hash"] != code_hash():
+            print(f"refusing --held-out: the agent's code changed since the freeze ({frozen['code_hash']} -> {code_hash()})", file=sys.stderr)
+            return 2
+        sig = settings_signature(a)
+        if sig not in frozen["variants"].values():
+            print(f"refusing --held-out: these settings are not a frozen variant ({json.dumps(sig, sort_keys=True)}); "
+                  f"frozen: {', '.join(frozen['variants'])}", file=sys.stderr)
             return 2
 
     if a.memory_postgres and (not [x for x in a.memory_from.split(",") if x] or a.recording in a.memory_from.split(",")):
@@ -136,6 +178,9 @@ def main(argv=None) -> int:
     price_source = "command line" if (a.price_in or a.price_out) else ""
     if not price_source and a.provider != "heuristic":
         a.price_in, a.price_out, price_source = price_for(getattr(llm, "name", a.model))
+    if frozen and a.provider != "heuristic" and getattr(llm, "name", a.model) != frozen["model"]:
+        print(f"refusing --held-out: model {getattr(llm, 'name', a.model)} is not the frozen one ({frozen['model']})", file=sys.stderr)
+        return 2
     if a.ledger and a.provider != "heuristic":   # the floor makes no model request
         llm = Metered(llm, Ledger(a.ledger, getattr(llm, "name", a.model), a.price_in, a.price_out, a.max_requests_per_day))
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,

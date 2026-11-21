@@ -45,13 +45,17 @@ class Freeze(unittest.TestCase):
         self.frozen = self.tmp / "FROZEN.json"
         p1 = mock.patch.object(run, "FROZEN", self.frozen)
         p2 = mock.patch.object(freeze, "FROZEN", self.frozen)
-        p1.start(), p2.start()
-        self.addCleanup(p1.stop), self.addCleanup(p2.stop)
+        p3 = mock.patch.object(freeze, "dirty", lambda: [])
+        p1.start(), p2.start(), p3.start()
+        self.addCleanup(p1.stop), self.addCleanup(p2.stop), self.addCleanup(p3.stop)
 
-    def hosted(self, provider="anthropic", version=PROMPT_VERSION):
-        d = self.tmp / f"h-{provider}-{version}"
+    def hosted(self, provider="anthropic", version=PROMPT_VERSION, graph_version=None, recheck=2.0):
+        from drishti_agent.prompts_graph import GRAPH_PROMPT_VERSION
+        d = self.tmp / f"h-{provider}-{version}-{graph_version}-{recheck}"
         d.mkdir()
-        (d / "summary.json").write_text(json.dumps({"meta": {"provider": provider, "prompt_version": version, "model": "m"}}))
+        (d / "summary.json").write_text(json.dumps({"meta": {"provider": provider, "prompt_version": version, "model": "m",
+                                                             "graph_prompt_version": graph_version or GRAPH_PROMPT_VERSION,
+                                                             "recheck_minutes": recheck}}))
         return str(d)
 
     def test_held_out_refuses_without_or_against_a_freeze(self):
@@ -65,8 +69,20 @@ class Freeze(unittest.TestCase):
         self.assertEqual(freeze.main(["--tuned-on", "c2", "--hosted-check", str(self.tmp / "missing")]), 2)
         self.assertEqual(freeze.main(["--tuned-on", "c2", "--hosted-check", self.hosted("ollama")]), 2)
         self.assertEqual(freeze.main(["--tuned-on", "c2", "--hosted-check", self.hosted(version="old")]), 2)
+        self.assertEqual(freeze.main(["--tuned-on", "c2", "--hosted-check", self.hosted(graph_version="old")]), 2)
+        self.assertEqual(freeze.main(["--tuned-on", "c2", "--hosted-check", self.hosted(recheck=None)]), 2)
         self.assertEqual(freeze.main(["--tuned-on", "c2", "--hosted-check", self.hosted()]), 0)
-        self.assertEqual(json.loads(self.frozen.read_text())["prompt_version"], PROMPT_VERSION)
+        f = json.loads(self.frozen.read_text())
+        self.assertEqual((f["prompt_version"], f["version"], f["model"], f["recheck_minutes"]), (PROMPT_VERSION, 2, "m", 2.0))
+        self.assertEqual(f["code_hash"], run.code_hash())
+        self.assertEqual(set(f["variants"]), {"graph", "v0", "baseline", "floor", "no-recheck", "no-rb", "recheck0", "mem", "b20"})
+        self.assertEqual([n for n, v in f["variant_sets"].items() if v["set"] == "first"],
+                         ["graph", "v0", "baseline", "floor", "no-recheck", "no-rb"], "option B's first set")
+
+    def test_freeze_refuses_uncommitted_changes(self):
+        with mock.patch.object(freeze, "dirty", lambda: [" M agent/drishti_agent/graph.py"]):
+            self.assertEqual(freeze.main(["--tuned-on", "c2", "--hosted-check", self.hosted()]), 2)
+        self.assertFalse(self.frozen.exists())
 
 
 class Report(unittest.TestCase):
