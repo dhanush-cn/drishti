@@ -2,5 +2,5 @@ bench/runs/
 clickhouse-lab-out/
 eval-work/
 agent/.venv/
-agent/**/__pycache__/
+**/__pycache__/
 agent/*.egg-info/
