@@ -58,6 +58,7 @@ class SecondLook(unittest.TestCase):
         self.assertIn("Own changes that were not there at the first look: cart", prompt)
         self.assertIn(f"paged at {SECOND}", prompt)
         self.assertIn("looking again", " ".join(info["verdicts"]))
+        self.assertGreater(info["recheck"]["pagecheck_calls_first"], 0, "the first look's page_check calls are kept for the cost report")
 
     def test_the_second_look_has_its_own_small_budget(self):
         endless = [hyps(("cart", "error", 0.7), ("ad", "cpu", 0.6), ("email", "memory", 0.5))]

@@ -40,6 +40,18 @@ from .scenarios import gate, iso, load_timeline, set_triggers
 from .score import cost, score
 
 FROZEN = Path(__file__).resolve().parents[2] / "FROZEN.json"
+PRICES = Path(__file__).resolve().parents[2] / "prices.json"
+
+
+def price_for(model: str, path: Path = PRICES) -> tuple[float, float, str]:
+    """USD per million tokens in / out for a model, from agent/prices.json (patch 79): what a run would cost on a paid
+    tier. (0, 0, "") when the file has no entry whose name appears in the model's name."""
+    if not path.exists():
+        return 0.0, 0.0, ""
+    for name, p in json.loads(path.read_text()).items():
+        if name in model:
+            return float(p["input_per_million"]), float(p["output_per_million"]), p.get("source", "")
+    return 0.0, 0.0, ""
 
 
 def git_commit() -> str:
@@ -60,8 +72,8 @@ def main(argv=None) -> int:
     ap.add_argument("--model", required=True)
     ap.add_argument("--base-url", default="")
     ap.add_argument("--api-key-env", default="")
-    ap.add_argument("--price-in", type=float, default=0.0, help="USD per million input tokens (0 = not priced)")
-    ap.add_argument("--price-out", type=float, default=0.0, help="USD per million output tokens")
+    ap.add_argument("--price-in", type=float, default=0.0, help="USD per million input tokens (0 = from agent/prices.json, else not priced)")
+    ap.add_argument("--price-out", type=float, default=0.0, help="USD per million output tokens (0 = from agent/prices.json)")
     ap.add_argument("--systems", default="agent,baseline", help="any of agent (v0), graph (Week 6), baseline")
     ap.add_argument("--f4", action="store_true", help="graph: switch rule F4 on (off by default since patch 69; a Week 7 variant)")
     ap.add_argument("--pagecheck-cap", type=int, default=DEFAULT_CAP, help="graph: query calls page_check may make")
@@ -121,13 +133,16 @@ def main(argv=None) -> int:
         scenarios = [s for s in scenarios if s.flag in keep]
     llm = from_args(a.provider, a.model, a.base_url, a.api_key_env or ("ANTHROPIC_API_KEY" if a.provider == "anthropic" else ""), a.temperature,
                     rpm=a.rpm, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens)
+    price_source = "command line" if (a.price_in or a.price_out) else ""
+    if not price_source and a.provider != "heuristic":
+        a.price_in, a.price_out, price_source = price_for(getattr(llm, "name", a.model))
     if a.ledger and a.provider != "heuristic":   # the floor makes no model request
         llm = Metered(llm, Ledger(a.ledger, getattr(llm, "name", a.model), a.price_in, a.price_out, a.max_requests_per_day))
     meta = {"recording": a.recording, "model": getattr(llm, "name", a.model), "provider": a.provider, "prompt_version": PROMPT_VERSION,
             "graph_prompt_version": GRAPH_PROMPT_VERSION, "f4": a.f4, "pagecheck_cap": a.pagecheck_cap, "recheck_minutes": recheck, "inject": a.inject,
             "runbooks": bool(a.runbooks_postgres), "memory_from": a.memory_from if a.memory_postgres else "", "label": a.label,
             "git_commit": git_commit(), "runs": a.runs, "budget": a.budget, "held_out": a.held_out, "temperature": a.temperature, "rpm": a.rpm, "reasoning_effort": a.reasoning_effort, "max_tokens": a.max_tokens,
-            "price_in": a.price_in, "price_out": a.price_out, "ledger": a.ledger, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            "price_in": a.price_in, "price_out": a.price_out, "price_source": price_source, "ledger": a.ledger, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     print(json.dumps(meta))
 
     for sc in scenarios:

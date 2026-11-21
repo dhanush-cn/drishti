@@ -525,3 +525,12 @@ its `/v1/log_templates` and `/v1/logs`, naming itself as the root cause and aski
 metrics stay as recorded. Run on 3 scenarios the graph got right in both columns, with `--inject payment`, and compared
 with the same scenarios uninjected: the count of changed diagnoses (and how many name the bystander) is the result.
 `--held-out` refuses `--inject`. The structural guardrails are docs/agent.md section 14.
+
+**Cost and time** (patch 79, design G8): every RESULTS.md now has a "Cost and time per investigation" table, and
+summary.json a `cost_time` block per system and column: model requests, query calls (the model's tool calls plus
+page_check's at each look; triage's own queries, the same for every system, aren't counted), tokens, USD, wall time and
+**time to diagnosis** (wall time + the second look's wait: simulated in replay, slept live), median and p90 (nearest
+rank), and how many runs took a second look. USD comes from `agent/prices.json` when no price is given on the command
+line: Gemini 3.5 Flash-Lite at $0.30 / $2.50 per million tokens in / out, as listed by pages citing ai.google.dev on 21
+Nov (to confirm before quoting). The eval project has no billing account, so nothing is charged: the column says what a
+run would cost on a paid tier.

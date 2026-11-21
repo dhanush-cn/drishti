@@ -8,9 +8,65 @@ silently dropped. End-to-end misses (no alert) count as wrong.
 from __future__ import annotations
 
 import json
+import math
 import statistics
 from collections import defaultdict
 from pathlib import Path
+
+
+def p90(xs: list) -> float | None:
+    """Nearest-rank 90th percentile (no interpolation choices)."""
+    if not xs:
+        return None
+    s = sorted(xs)
+    return s[max(0, math.ceil(0.9 * len(s)) - 1)]
+
+
+def graph_record(result: dict) -> dict:
+    """The graph's state record (its last transcript entry, role "graph"), or {} for v0 and the baseline."""
+    t = (result or {}).get("transcript") or []
+    if t and t[-1].get("role") == "graph":
+        try:
+            return json.loads(t[-1]["content"])
+        except (ValueError, TypeError):
+            return {}
+    return {}
+
+
+def cost_time(rs: list, price_in: float, price_out: float) -> dict:
+    """Per investigation (patch 79, Week 7 design G8): model requests, query calls, tokens, USD at the given prices
+    (what it would cost on a paid tier; the free tier charges nothing), wall time, and time to diagnosis = wall time +
+    the time it waited on purpose (the second look's minutes: simulated in replay, slept live). Query calls = the
+    model's tool calls + page_check's calls at each look; triage's own queries (the same for every system) aren't
+    counted. Median and p90 (nearest rank)."""
+    reqs, queries, tin, tout, usd, wall, ttd, rechecks = [], [], [], [], [], [], [], 0
+    for r in rs:
+        x = r.get("result")
+        if not x:
+            continue
+        g = graph_record(x)
+        rc = g.get("recheck") or {}
+        pc_calls = ((g.get("pagecheck") or {}).get("calls") or 0) + (rc.get("pagecheck_calls_first") or 0)
+        wait = 60.0 * (rc.get("minutes") or 0) if rc else 0.0
+        rechecks += bool(rc)
+        u = x.get("usage") or {}
+        reqs.append(x.get("llm_calls", 0))
+        queries.append(len(x.get("tool_calls") or []) + pc_calls)
+        tin.append(u.get("input_tokens", 0))
+        tout.append(u.get("output_tokens", 0))
+        usd.append(u.get("input_tokens", 0) / 1e6 * price_in + u.get("output_tokens", 0) / 1e6 * price_out)
+        wall.append(x.get("seconds", 0.0))
+        ttd.append(x.get("seconds", 0.0) + wait)
+    if not reqs:
+        return {"n": 0}
+    m = statistics.median
+    return {"n": len(reqs), "rechecks": rechecks,
+            "requests_median": m(reqs), "requests_p90": p90(reqs), "requests_total": sum(reqs),
+            "queries_median": m(queries), "queries_p90": p90(queries),
+            "tokens_in_median": m(tin), "tokens_out_median": m(tout),
+            "usd_median": round(m(usd), 6), "usd_p90": round(p90(usd), 6), "usd_total": round(sum(usd), 4),
+            "wall_s_median": m(wall), "wall_s_p90": p90(wall),
+            "time_to_diagnosis_s_median": m(ttd), "time_to_diagnosis_s_p90": p90(ttd)}
 
 
 def write(out: Path, meta: dict) -> dict:
@@ -53,6 +109,8 @@ def write(out: Path, meta: dict) -> dict:
         }
 
     totals = {f"{sys}/{col}": agg(rs) for (sys, col), rs in sorted(cells.items())}
+    for (sys, col), rs in sorted(cells.items()):
+        totals[f"{sys}/{col}"]["cost_time"] = cost_time(rs, meta.get("price_in", 0.0), meta.get("price_out", 0.0))
     summary = {"meta": meta, "totals": totals, "scored_scenarios": sum(1 for s in scen if s["gate_passed"]),
                "scenarios": len(scen)}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
@@ -77,6 +135,25 @@ def write(out: Path, meta: dict) -> dict:
         p(f"| {k} | {t['top1']}/{n} | {t['top3']}/{n} | {t['fault']}/{n} | {t['unsure']}/{n} | {t['confidently_wrong']}/{n} | "
           f"{t['missed']}/{n} | {t['errors']} / {t['invalid']} | {t['median_tool_calls']} | {t['mean_input_tokens']} / {t['mean_output_tokens']} | "
           f"{t['median_seconds']} | {t['usd_total'] if meta['price_in'] or meta['price_out'] else 'not priced'} |")
+    p("")
+    priced = meta.get("price_in") or meta.get("price_out")
+    p("## Cost and time per investigation")
+    p("")
+    p(f"Median / p90 over the scored runs. USD at {meta.get('price_in', 0)} / {meta.get('price_out', 0)} per million tokens in / out"
+      + (f" ({meta['price_source']})" if meta.get("price_source") else "") + ": what the run would cost on a paid tier"
+      + ("" if priced else " (not priced)") + ". Query calls = tool calls + page_check (triage's queries not counted). "
+      "Time to diagnosis = wall time + the second look's wait (simulated in replay).")
+    p("")
+    p("| System / column | Model requests | Query calls | Tokens in / out (median) | USD per investigation | USD total | Wall s | Time to diagnosis s | Second looks |")
+    p("|---|---|---|---|---|---|---|---|---|")
+    for k, t in totals.items():
+        c = t.get("cost_time") or {}
+        if not c.get("n"):
+            continue
+        p(f"| {k} | {c['requests_median']} / {c['requests_p90']} | {c['queries_median']} / {c['queries_p90']} | "
+          f"{c['tokens_in_median']} / {c['tokens_out_median']} | {c['usd_median']:.4f} / {c['usd_p90']:.4f} | {c['usd_total']:.4f} | "
+          f"{c['wall_s_median']} / {c['wall_s_p90']} | {c['time_to_diagnosis_s_median']} / {c['time_to_diagnosis_s_p90']} | "
+          f"{c['rechecks']}/{c['n']} |")
     p("")
     p("## Scenarios")
     p("")

@@ -483,7 +483,8 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
         pc_holder.update(pc=pc, until=until)
         changed = [c.service for c in pc.candidates if c.own_change and not before.get(norm(c.service))]
         info = {"minutes": recheck_minutes, "until": until, "changed": changed, "waited_s": waited,
-                "llm_calls_before": state["llm_calls"], "tools_before": state["used"]}
+                "llm_calls_before": state["llm_calls"], "tools_before": state["used"],
+                "pagecheck_calls_first": state["pc"].get("calls", 0)}
         note = (f"Own changes that were not there at the first look: {', '.join(changed)}." if changed
                 else "No service shows an own change that wasn't there at the first look.")
         context = (f"{briefing(until, alert)}\n\nTriage at that moment:\n\n{triage(qapi, alert)}"
