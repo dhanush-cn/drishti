@@ -47,7 +47,8 @@ BRIEFING_PAGED = ("You were paged at {until} by the detector's alert: service {s
                   "(often a service it calls, or one whose own change started first).")
 BRIEFING_UNPAGED = "An incident was reported at {until}; no single alert identifies it."
 
-HYPOTHESIZE = """Propose up to 3 hypotheses that have NOT been tested yet, best first, with submit_hypotheses. Ground them in the
+HYPOTHESIZE = """Propose up to 3 hypotheses that have NOT been tested yet, best first, with submit_hypotheses. A hypothesis is a
+service and a fault type: a service refuted for one fault type can be proposed again with another. Ground them in the
 candidate table and the triage. If nothing left is worth testing, submit an empty list."""
 
 TEST = """Test this hypothesis: {hid}: {service} ({fault_type}), prior {prior}. Why: {why}

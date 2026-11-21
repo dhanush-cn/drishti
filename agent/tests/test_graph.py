@@ -95,6 +95,24 @@ class Flow(unittest.TestCase):
         self.assertIsNone(r.diagnosis.root_cause_service)
         self.assertIn("no untested hypothesis", info["verdicts"][-1])
 
+    def test_a_refuted_service_can_be_tested_with_another_fault_type(self):
+        # Capture 2, 21 Nov: recommendation refuted as an error; round 2's latency hypothesis was dropped as "tested".
+        r, info, llm = run([hyps(("frontend", "error", 0.6)),
+                            call("c1", "spans", service="frontend"), mark("refuted", 0.1, ["t1"]),
+                            hyps(("frontend", "traffic", 0.5)),
+                            call("c2", "spans", service="frontend"), mark("supported", 0.8, ["t2"])])
+        self.assertEqual([(h["service"], h["fault_type"], h["status"]) for h in info["hypotheses"]],
+                         [("frontend", "error", "refuted"), ("frontend", "traffic", "supported")])
+        self.assertIn("Test this hypothesis: h2: frontend (traffic)", llm.sent[4][1][0]["content"])
+        self.assertEqual((r.diagnosis.root_cause_service, r.diagnosis.fault_type.value), ("frontend", "traffic"))
+
+    def test_the_fault_type_a_test_marked_counts_as_tested_too(self):
+        r, info, _ = run([hyps(("frontend", "error", 0.6)),
+                          call("c1", "spans", service="frontend"), mark("refuted", 0.1, ["t1"], fault_type="latency"),
+                          hyps(("frontend", "latency", 0.9), ("frontend", "error", 0.8))])
+        self.assertEqual(len(info["hypotheses"]), 1)
+        self.assertIn("no untested hypothesis", info["verdicts"][-1])
+
     def test_empty_hypothesis_list_is_unsure(self):
         r, _, _ = run([hyps()])
         self.assertIsNone(r.diagnosis.root_cause_service)

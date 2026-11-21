@@ -143,6 +143,11 @@ def _fault(x) -> str:
     return x if x in FAULTS else "unknown"
 
 
+def hyp_keys(h: dict) -> set[tuple[str, str]]:
+    """What a hypothesis has tested: its service with the fault type proposed and the one the test marked."""
+    return {(norm(h["service"]), h["fault_type"]), (norm(h["service"]), h.get("proposed_fault", h["fault_type"]))}
+
+
 def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optional[dict] = None, *, f4: bool = False,
                 pc_cap: int = DEFAULT_CAP, extras: Optional[list[Callable[[dict], str]]] = None, checkpointer=None,
                 after_node: Optional[Callable[[str], None]] = None, local_tools: Optional[dict] = None,
@@ -220,16 +225,19 @@ def build_graph(api: QueryAPI, llm, budget: int = DEFAULT_BUDGET, alert: Optiona
             if state["hyp_nudges"] + 1 >= MAX_NUDGES:
                 return {**base, "next": "unsure", "verdicts": state["verdicts"] + ["no usable hypotheses from the model"]}
             return {**base, "hyp_nudges": state["hyp_nudges"] + 1, "next": "hypothesize"}
-        tested = {norm(h["service"]) for h in state["hypotheses"]}
+        # A hypothesis is a service AND a fault type: a service refuted as "error" can still be tested as "cpu"
+        # (capture 2, 21 Nov: recommendation refuted as an error, its round-2 latency hypothesis was dropped).
+        # Both the proposed type and the one the test marked count as tested.
+        tested = {k for h in state["hypotheses"] for k in hyp_keys(h)}
         hyps = list(state["hypotheses"])
         for it in items[:3]:
             if not isinstance(it, dict) or not str(it.get("service") or "").strip():
                 continue
-            svc = str(it["service"]).strip()
-            if norm(svc) in tested:
+            svc, fault = str(it["service"]).strip(), _fault(it.get("fault_type"))
+            if (norm(svc), fault) in tested:
                 continue
-            tested.add(norm(svc))
-            hyps.append({"id": f"h{len(hyps) + 1}", "service": svc, "fault_type": _fault(it.get("fault_type")),
+            tested.add((norm(svc), fault))
+            hyps.append({"id": f"h{len(hyps) + 1}", "service": svc, "fault_type": fault, "proposed_fault": fault,
                          "prior": _f(it.get("prior"), 0.3), "why": str(it.get("why") or ""), "round": rnd,
                          "status": "open", "confidence": None, "evidence": [], "summary": "", "note": ""})
         new = [h for h in hyps if h["status"] == "open"]

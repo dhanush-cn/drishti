@@ -102,8 +102,9 @@ triage (code) → page_check (code) → hypothesize (model) → test: model ⇄ 
 ```
 
 - **hypothesize:** the model sees the briefing, triage, the candidate table and the hypotheses so far, and calls
-  `submit_hypotheses` with up to 3 untested ones (service, fault type, prior, why). Services already tested aren't
-  tested again.
+  `submit_hypotheses` with up to 3 untested ones (service, fault type, prior, why). A hypothesis is a service and
+  a fault type: the same pair isn't tested twice, but a service refuted as one fault type can be tested as another
+  (patch 70; on capture 2 the model's second try at recommendation, as latency after a refuted error, was dropped).
 - **test:** one hypothesis at a time, highest prior first. The model calls the query tools (at most 4 per hypothesis)
   and ends with `mark_hypothesis`: supported, refuted or inconclusive, a confidence, and the ids of the results that
   show it (`[t3]`, or `candidates` for its row in the table). A verdict sent in the same turn as tool calls is
