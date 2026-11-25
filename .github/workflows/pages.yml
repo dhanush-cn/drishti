@@ -1,0 +1,38 @@
+# The replay page (Week 8 design H1): publishes site/ to GitHub Pages on every push to main that touches it.
+# One-time switch: Settings -> Pages -> Source: GitHub Actions. Nothing is built: site/ is already static
+# (index.html + runs.json written by scripts/replay_export.py), so the job only uploads it.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch: {}
+
+# Least privilege: read the repo, write only to Pages; the OIDC token proves the deploy came from this workflow.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; a newer push doesn't cancel a deploy already running (no half-published site).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse to publish without the recorded runs
+        run: test -s site/runs.json && python3 -c "import json; d=json.load(open('site/runs.json')); assert d['runs'] and d['headline']"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
