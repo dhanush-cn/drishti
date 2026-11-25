@@ -560,3 +560,70 @@ The variant set (`python -m drishti_agent.evals.variants --set first|extra`), op
 | b20 | extra | 1 | design vs query budget |
 
 "extra" runs only with quota left after the first set; a control that doesn't run is reported as not run.
+
+## 12. Week 7 measured (21–25 Nov 2026)
+
+Internal: replayed recordings of the OTel Demo on one laptop, Gemini 3.5 Flash-Lite on the free tier (no billing
+account; USD columns are what a paid tier would charge at the price in section 10, not money spent). Every number is
+from the results files (`WEEK7-RESULTS.md`, `runs.jsonl`, latest row per cell). A redone cell's earlier rows were all
+infrastructure errors (DNS outage, HTTP 503 or 429 from Google, the ledger cap), never a diagnosis.
+
+**Checks on capture 2 (tuning recording, 10 scored, 1 run each).** Two end-to-end changes were allowed (design G1).
+
+| | end-to-end top-1 | top-3 | unsure / confidently wrong | agent-only top-1 | second looks (fixed) |
+|---|---|---|---|---|---|
+| Week 6 graph (section 8) | 5/10 | – | 3 / 2 | 10/10 (with memory) | – |
+| check 1: second look at +2 min (graph prompts `27d35cbe11c5`) | 7/10 | 9/10 | 2 / 1 | 8/10 | 4 (2) |
+| check 2: + test what changed first (`011b9a0338f5`) | 7/10 | 10/10 | 1 / 2 | 7/10 | 4 (3) |
+| floor (repeat the alert) | 7/10 | | | | |
+
+Check 1 found a new failure class (the second look ran out of calls before testing the service that changed), so change
+2 was made, checked once and frozen whatever it scored (commit `cea7a44`). Agent-only moved 8 → 7 with no code change on
+its path: a single run moves by one or two.
+
+**Injection eval (capture 2, `--inject payment`, 3 scenarios × 2 columns, compared with check 2 uninjected).** 5 of 6
+diagnoses unchanged; 1 changed (emailMemoryLeak agent-only: email at 0.9 → unsure). Payment was never named and never in
+a ranked list.
+
+**Capture C (held out, frozen agent, 11 of 13 scenarios scored, section 8).** Headline: 3 runs per cell, 33 per cell.
+
+| | end-to-end top-1 | top-3 | unsure | confidently wrong | invalid | agent-only top-1 | top-3 | confidently wrong |
+|---|---|---|---|---|---|---|---|---|
+| **graph** (runbooks, no memory, second look at 2 min) | **21/33** | **28/33** | 2 | 10 | 0 | **25/33** | **30/33** | 3 |
+| v0 (Week 5 tool loop) | 13/33 | 21/33 | 13 | 7 | 3 | 24/33 | 25/33 | 8 |
+| baseline (no tools) | 18/33 | 22/33 | 5 | 10 | 2 | 18/33 | 27/33 | 12 |
+| floor (alert, else top changed) | 18/33 | 24/33 | 0 | – | 0 | 15/33 | 24/33 | – |
+
+The floor gives no confidence, so "confidently wrong" doesn't apply to it. Graph end-to-end top-1 per run: 7, 8, 6 of 11;
+agent-only 9, 8, 8.
+
+Controls, 1 run (11 per cell):
+
+| | end-to-end top-1 | top-3 | unsure / confidently wrong | agent-only top-1 |
+|---|---|---|---|---|
+| no-recheck (end-to-end only) | 3/11 | 8/11 | 3 / 5 | – |
+| no-rb | 6/11 | 9/11 | 0 / 5 | 8/11 |
+
+- **The second look** fired on 11 of 33 graph end-to-end runs; they ended 8 right, 2 unsure, 1 confidently wrong. The
+  same 11 without it would have been unsure (13/33 overall), in line with no-recheck's 3/11.
+- **Against the floor**, end-to-end top-1 is 21 vs 18: the graph is better on 4 scenarios (adFailure, paymentUnreachable,
+  productCatalogLockContention, productCatalogFailure) and worse on 4 (adHighCpu, imageSlowLoad,
+  loadGeneratorFloodHomepage, recommendationCacheFailure). Top-3 is 28 vs 24.
+- **Confidently wrong end-to-end: 10/33.** 9 of the 10 are committed first looks, which the second look never reaches.
+  5 name a service that changed in an earlier scenario (emailMemoryLeak → recommendation ×3, imageSlowLoad → ad ×2).
+  Agent-only: 3/33, all emailMemoryLeak → quote.
+- **Graph vs v0:** agent-only 25 vs 24; end-to-end 21 vs 13, mostly v0's 13 unsure answers.
+- **Runbooks:** no difference detectable with one run (agent-only 8/11 vs 8–9 per graph run, end-to-end 6/11 vs 6–8).
+
+Cost and time per investigation (median / p90):
+
+| | model requests | query calls | USD at the paid price | time to diagnosis, s |
+|---|---|---|---|---|
+| graph end-to-end | 10 / 20 | 11 / 20 | 0.0171 / 0.0374 | 121.5 / 394.4 (includes the simulated 2-min wait) |
+| graph agent-only | 4 / 13 | 12 / 20 | 0.0084 / 0.0216 | 52.4 / 177.4 |
+| v0 end-to-end | 8 / 13 | 7 / 12 | 0.0184 / 0.0356 | 86.5 / 154.8 |
+| baseline end-to-end | 1 / 1 | 0 / 0 | 0.0023 / 0.0029 | 13.2 / 35.3 |
+
+**Quota.** Capture C took four free-quota days (22–25 Nov). On 24 Nov Google answered 429 when the ledger showed 397 of
+the 450 self-cap: the client's retries during a 503 spell count against Google's quota, but only the final attempt is
+recorded. The self-cap is an upper bound, not a guarantee.
