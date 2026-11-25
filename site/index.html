@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drishti: recorded investigations</title>
+<meta name="description" content="Step through real, held-out investigations by Drishti's root-cause agent, including the wrong and unsure ones.">
+<style>
+  :root {
+    --paper: #EEF1F4; --sheet: #F8FAFB; --ink: #1C2733; --muted: #5B6875; --rule: #C9D1D9;
+    --alert: #B7791F; --right: #1F7A6E; --wrong: #B3361F;
+    --read: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --code: ui-monospace, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); color: var(--ink); }
+  body { margin: 0; font: 1.0625rem/1.6 var(--read); }
+  main { max-width: 52rem; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  h1 { font: 600 2.4rem/1.1 var(--read); letter-spacing: -0.01em; margin: 0 0 1rem; }
+  h2 { font: 600 1.35rem/1.25 var(--read); margin: 3rem 0 0.75rem; }
+  p { margin: 0 0 1rem; max-width: 68ch; }
+  a { color: var(--ink); text-decoration-color: var(--alert); text-underline-offset: 0.18em; }
+  a:hover { text-decoration-thickness: 2px; }
+  :focus-visible { outline: 3px solid var(--alert); outline-offset: 2px; }
+  .lede { font-size: 1.2rem; line-height: 1.5; }
+  .links { font: 0.95rem/1.5 var(--ui); display: flex; gap: 1.25rem; flex-wrap: wrap; margin-top: 1.25rem; }
+  .small { font: 0.875rem/1.5 var(--ui); color: var(--muted); }
+
+  /* Measured results */
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; font: 0.9rem/1.35 var(--ui); font-variant-numeric: tabular-nums; width: 100%; }
+  th, td { padding: 0.4rem 0.6rem; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { font-weight: 600; color: var(--muted); vertical-align: bottom; }
+  thead tr.group th { border-bottom: 0; color: var(--ink); padding-bottom: 0; }
+  tbody tr.lead td { font-weight: 650; }
+  caption { caption-side: bottom; text-align: left; padding-top: 0.6rem; }
+
+  /* Run picker */
+  .picker { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+  .picker button { font: 0.9rem/1.3 var(--ui); text-align: left; padding: 0.55rem 0.8rem; cursor: pointer;
+    background: var(--sheet); color: var(--ink); border: 1px solid var(--rule); border-radius: 6px; }
+  .picker button[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--ink); }
+  .picker .flag { display: block; color: var(--muted); font-size: 0.82rem; }
+  .mark { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-right: 0.4rem; vertical-align: 0.05em; }
+  .is-right { background: var(--right); } .is-wrong { background: var(--wrong); } .is-unsure { background: var(--muted); }
+
+  /* The investigation */
+  .alert { margin: 1.5rem 0 1rem; padding: 0.9rem 1rem; background: var(--sheet); border-left: 4px solid var(--alert); }
+  .alert p { margin: 0; }
+  .alert .who { font: 600 0.85rem/1.4 var(--ui); color: var(--alert); margin-bottom: 0.25rem; }
+  .controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 1rem 0 1.5rem;
+    font: 0.9rem/1 var(--ui); }
+  .controls button { font: inherit; padding: 0.55rem 0.9rem; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--ink); background: var(--ink); color: var(--sheet); }
+  .controls button.quiet { background: transparent; color: var(--ink); }
+  .controls button:disabled { opacity: 0.4; cursor: default; }
+  .controls .count { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; border-left: 2px solid var(--rule); }
+  ol.steps > li { counter-increment: step; position: relative; padding: 0 0 1.6rem 1.6rem; }
+  ol.steps > li::before { content: counter(step); position: absolute; left: -0.85rem; top: 0.1rem; width: 1.6rem;
+    height: 1.6rem; border-radius: 50%; background: var(--paper); border: 2px solid var(--rule); color: var(--muted);
+    font: 600 0.75rem/1.35rem var(--ui); text-align: center; font-variant-numeric: tabular-nums; }
+  ol.steps > li.latest::before { border-color: var(--ink); color: var(--ink); }
+  ol.steps > li.new { animation: arrive 260ms ease-out; }
+  @keyframes arrive { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .step-title { font: 600 1rem/1.4 var(--ui); margin: 0 0 0.35rem; }
+  .step-title .tag { font-weight: 400; color: var(--muted); }
+  .step p { margin: 0.25rem 0; }
+  .step ul { margin: 0.25rem 0; padding-left: 1.1rem; }
+  .step li { margin: 0.2rem 0; }
+  .step table { font-size: 0.82rem; margin: 0.35rem 0; }
+  .step td, .step th { white-space: normal; text-align: left; }
+  code, .code { font: 0.84rem/1.45 var(--code); }
+  .code { display: block; background: var(--sheet); padding: 0.45rem 0.6rem; border-radius: 4px; overflow-wrap: anywhere; }
+  .s-supported { color: var(--right); font-weight: 600; } .s-refuted { color: var(--wrong); font-weight: 600; }
+  .s-other { color: var(--muted); font-weight: 600; }
+  .prior { font-variant-numeric: tabular-nums; color: var(--muted); }
+
+  /* The outcome: the one loud thing on the page */
+  .outcome { margin-top: 0.5rem; padding: 1.4rem 1.4rem 1.2rem; border-radius: 8px; color: var(--sheet); }
+  .outcome.right { background: var(--right); } .outcome.wrong { background: var(--wrong); } .outcome.unsure { background: var(--muted); }
+  .outcome .verdict { font: 600 1.9rem/1.15 var(--read); margin: 0 0 0.6rem; }
+  .outcome dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; font: 0.95rem/1.45 var(--ui); }
+  .outcome dt { opacity: 0.85; } .outcome dd { margin: 0; font-weight: 600; }
+  .outcome p { font: 0.9rem/1.5 var(--ui); margin: 0.8rem 0 0; opacity: 0.92; }
+  .error { border-left: 4px solid var(--wrong); padding: 0.75rem 1rem; background: var(--sheet); }
+  footer { margin-top: 4rem; }
+  @media (prefers-reduced-motion: reduce) { ol.steps > li.new { animation: none; } }
+  @media (max-width: 34rem) { h1 { font-size: 1.9rem; } main { padding-top: 2rem; } .controls .count { margin-left: 0; width: 100%; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Drishti</h1>
+    <p class="lede">An observability pipeline in Go (OTLP, Kafka, ClickHouse, Redis) that turns telemetry into alerts in
+      seconds, and a LangGraph agent that finds which service caused the alert and proposes a fix for a human to approve.</p>
+    <p>This page replays real investigations the agent ran on a recording it had never been tuned on. They were picked by
+      a rule fixed in advance, and the wrong and unsure ones are here on purpose.</p>
+    <nav class="links" aria-label="Project links">
+      <a href="https://github.com/dhanush-cn/drishti">Source on GitHub</a>
+      <a href="https://github.com/dhanush-cn/drishti/blob/main/docs/evals.md#12-week-7-measured-2125-nov-2026">How these numbers were measured</a>
+    </nav>
+  </header>
+
+  <section aria-labelledby="results-h">
+    <h2 id="results-h">Measured on the held-out recording</h2>
+    <p>Root cause named correctly, over 11 scored failure scenarios run 3 times each. End-to-end starts from the
+      detector's alert; agent-only starts from a report with no alert.</p>
+    <div class="scroll"><table id="headline">
+      <caption class="small">Internal: replayed recordings of the OpenTelemetry Demo on one laptop, one model
+        (Gemini 3.5 Flash-Lite). Confidently wrong means a wrong service named with confidence 0.7 or more. The floor
+        names the alert's service (else the top changed one) with the same 0.5 every time, so confidently wrong
+        doesn't apply to it.</caption>
+      <thead>
+        <tr class="group"><th></th><th colspan="4" scope="colgroup">End-to-end</th><th colspan="3" scope="colgroup">Agent-only</th></tr>
+        <tr><th scope="col">System</th><th scope="col">Right</th><th scope="col">In top 3</th><th scope="col">Unsure</th>
+          <th scope="col">Confidently wrong</th><th scope="col">Right</th><th scope="col">In top 3</th><th scope="col">Confidently wrong</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section aria-labelledby="replay-h">
+    <h2 id="replay-h">Step through an investigation</h2>
+    <p class="small" id="rule"></p>
+    <ul class="picker" id="picker" aria-label="Recorded investigations"></ul>
+    <div id="run" aria-live="polite"></div>
+  </section>
+
+  <footer class="small">
+    <p>Recorded runs, not live: this page makes no model calls. Tool output is cut to short summaries. Text written by
+      the model is shown as plain text.</p>
+  </footer>
+</main>
+
+<script>
+"use strict";
+// Every piece of text from runs.json came from a model or a recording: it is inserted with textContent only.
+const SYSTEMS = { graph: "Drishti agent", v0: "Plain tool loop (v0)", baseline: "One prompt, no tools", floor: "Floor: repeat the alert" };
+const COLUMNS = { "end-to-end": "end-to-end", "agent-only": "agent-only" };
+
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") n.className = v; else n.setAttribute(k, v);
+  }
+  for (const k of kids) {
+    if (k === null || k === undefined || k === false) continue;
+    n.append(typeof k === "string" || typeof k === "number" ? document.createTextNode(String(k)) : k);
+  }
+  return n;
+}
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
+const pct = x => (x === null || x === undefined) ? "?" : Math.round(x * 100) + "%";
+const fmtArgs = a => Object.entries(a || {}).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
+
+function headline(rows) {
+  const body = document.querySelector("#headline tbody");
+  for (const r of rows) {
+    const e = r.end_to_end, g = r.agent_only;
+    const frac = (x, n) => n ? `${x}/${n}` : "–";
+    const cw = t => t.gives_confidence ? String(t.confidently_wrong) : "–";
+    body.append(el("tr", { class: r.system === "graph" ? "lead" : "" },
+      el("td", {}, SYSTEMS[r.system] || r.system),
+      el("td", {}, frac(e.top1, e.n)), el("td", {}, frac(e.top3, e.n)), el("td", {}, String(e.unsure)), el("td", {}, cw(e)),
+      el("td", {}, frac(g.top1, g.n)), el("td", {}, frac(g.top3, g.n)), el("td", {}, cw(g))));
+  }
+}
+
+function outcomeKind(run) {
+  if (run.score.top1) return "right";
+  if (run.score.unsure) return "unsure";
+  return "wrong";
+}
+
+// One renderer per event type, the same types the live dashboard streams.
+const STEP = {
+  candidates(e) {
+    const t = el("table", {}, el("thead", {}, el("tr", {}, ...["Service", "Relation", "Own change", "Trend"].map(h => el("th", { scope: "col" }, h)))));
+    const b = el("tbody");
+    for (const c of e.candidates || []) {
+      const rel = c.relation + (c.depth ? `, depth ${c.depth}` : "");
+      b.append(el("tr", {}, el("td", {}, c.service), el("td", {}, rel),
+        el("td", {}, (c.own_change || []).join("; ") || "none"), el("td", {}, c.trend || "")));
+    }
+    t.append(b);
+    return [e.look === 2 ? "Candidates at the second look" : "Candidates from the call graph",
+      el("div", {}, el("p", {}, `Code, not the model: walked the call graph from the paged service (${e.paged || "none"}) and listed what changed.`),
+        el("div", { class: "scroll" }, t))];
+  },
+  hypotheses(e) {
+    if (!(e.items || []).length) return [`Hypotheses, round ${e.round}`, el("p", {}, "The model proposed nothing it could test.")];
+    return [`Hypotheses, round ${e.round}`, el("ul", {}, ...e.items.map(h =>
+      el("li", {}, el("strong", {}, `${h.id} ${h.service}`), ` (${h.fault_type}) `, el("span", { class: "prior" }, `prior ${pct(h.prior)}`),
+        h.why ? el("br") : null, h.why || "")))];
+  },
+  tool_calls(e) {
+    return [`Test ${e.hypothesis || ""}: query`, el("div", {}, ...e.calls.map(c => el("span", { class: "code" }, `${c.name}(${fmtArgs(c.arguments)})`)))];
+  },
+  tool_results(e) {
+    return ["Result", el("div", {}, ...e.results.map(r => el("div", {},
+      el("p", { class: "small" }, `${r.id || ""} ${r.name}${r.ok === false ? ", failed" : ""}`),
+      el("span", { class: "code" }, r.summary || ""))))];
+  },
+  verdict(e) {
+    const st = e.status || "";
+    const cls = st === "supported" ? "s-supported" : st === "refuted" ? "s-refuted" : "s-other";
+    return [`Verdict on ${e.hypothesis} ${e.service || ""}`, el("div", {},
+      st ? el("p", {}, el("span", { class: cls }, st), e.confidence !== null && e.confidence !== undefined ? `, confidence ${pct(e.confidence)}` : "") : null,
+      e.summary ? el("p", {}, e.summary) : null,
+      e.judge ? el("p", { class: "small" }, `Judge (code): ${e.judge}`) : null)];
+  },
+  judge(e) { return ["Judge (code)", el("p", {}, e.verdict || "")]; },
+  recheck(e) {
+    const changed = (e.changed || []).length ? `New own changes since the first look: ${e.changed.join(", ")}.` : "No service changed since the first look.";
+    return [`Second look, ${e.minutes} min later`, el("div", {},
+      el("p", {}, "The first look ended unsure, so instead of guessing the agent waited and looked again."),
+      el("p", {}, changed),
+      (e.superseded || []).length ? el("p", { class: "small" }, `Dropped untested: ${e.superseded.join(", ")}.`) : null)];
+  },
+  diagnosis(e) {
+    const d = e.diagnosis || {};
+    const head = d.root_cause_service ? `${d.root_cause_service} (${d.fault_type}), confidence ${pct(d.confidence)}` : "Unsure: no service named";
+    return ["Diagnosis", el("div", {},
+      el("p", {}, el("strong", {}, head)),
+      (d.ranked_services || []).length ? el("p", {}, `Ranked: ${d.ranked_services.map((s, i) => `${i + 1}. ${s}`).join("  ")}`) : null,
+      d.summary ? el("p", {}, d.summary) : null,
+      (d.ruled_out || []).length ? el("div", {}, el("p", { class: "small" }, "Ruled out:"), el("ul", {}, ...d.ruled_out.map(x => el("li", {}, x)))) : null)];
+  },
+  proposal(e) {
+    const p = e.proposal;
+    return ["Proposed fix", el("div", {},
+      p ? el("span", { class: "code" }, `${p.action}(${p.service})`) : el("p", {}, "No action proposed: an unsure diagnosis gets none."),
+      el("p", { class: "small" }, "Remediation is off in eval runs, so nothing was executed. Live, this waits for a person to approve it, then checks recovery."))];
+  },
+};
+
+let runs = [], current = -1, shown = 0, timer = null;
+
+function stepItem(e, isNew) {
+  const r = (STEP[e.type] || (x => [x.type, el("p", {}, JSON.stringify(x))]))(e);
+  return el("li", { class: "step" + (isNew ? " new" : "") }, el("p", { class: "step-title" }, r[0]), r[1]);
+}
+
+function outcomeBlock(run) {
+  const kind = outcomeKind(run);
+  const d = (run.events.find(e => e.type === "diagnosis") || {}).diagnosis || {};
+  const verdict = kind === "right" ? "Right" : kind === "unsure" ? "Unsure, and said so" : (run.score.confidently_wrong ? "Confidently wrong" : "Wrong");
+  return el("section", { class: `outcome ${kind}`, "aria-label": "Outcome" },
+    el("p", { class: "verdict" }, verdict),
+    el("dl", {},
+      el("dt", {}, "Actually broken"), el("dd", {}, run.label_services.join(" or ")),
+      el("dt", {}, "Agent said"), el("dd", {}, d.root_cause_service ? `${d.root_cause_service} at ${pct(d.confidence)}` : "unsure"),
+      el("dt", {}, "In its top 3"), el("dd", {}, run.score.top3 ? "yes" : "no")),
+    el("p", {}, `${plural(run.stats.model_requests, "model request")}, ${plural(run.stats.tool_calls, "query", "queries")} by the model, ${run.stats.seconds} s of wall time. ` +
+      `Scenario ${run.flag}, ${COLUMNS[run.column]}, run ${run.run}.`));
+}
+
+function render(fresh) {
+  const run = runs[current], box = document.getElementById("run");
+  const list = box.querySelector("ol.steps");
+  const items = list.children;
+  while (items.length < shown) list.append(stepItem(run.events[items.length], !fresh));
+  while (items.length > shown) list.lastChild.remove();
+  for (const li of items) li.classList.remove("latest");
+  if (items.length) items[items.length - 1].classList.add("latest");
+  const done = shown >= run.events.length;
+  box.querySelector(".outcome-slot").replaceChildren(done ? outcomeBlock(run) : "");
+  box.querySelector(".count").textContent = `Step ${shown} of ${run.events.length}`;
+  box.querySelector("[data-act=next]").disabled = done;
+  box.querySelector("[data-act=all]").disabled = done;
+  box.querySelector("[data-act=play]").textContent = timer ? "Pause" : "Play";
+  box.querySelector("[data-act=play]").disabled = done && !timer;
+  if (done) stop();
+}
+
+function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+function choose(i) {
+  stop();
+  current = i; shown = 1;
+  document.querySelectorAll("#picker button").forEach((b, j) => b.setAttribute("aria-pressed", String(j === i)));
+  const run = runs[i];
+  const box = document.getElementById("run");
+  const ctl = el("div", { class: "controls" },
+    el("button", { type: "button", "data-act": "next" }, "Next step"),
+    el("button", { type: "button", "data-act": "play", class: "quiet" }, "Play"),
+    el("button", { type: "button", "data-act": "all", class: "quiet" }, "Show all"),
+    el("button", { type: "button", "data-act": "restart", class: "quiet" }, "Restart"),
+    el("span", { class: "count" }));
+  box.replaceChildren(
+    el("div", { class: "alert" },
+      el("p", { class: "who" }, run.column === "end-to-end" ? "The page that started it" : "Agent-only: no alert, a report that something is wrong"),
+      el("p", {}, run.alert || "")),
+    ctl, el("ol", { class: "steps" }), el("div", { class: "outcome-slot" }));
+  ctl.addEventListener("click", ev => {
+    const act = ev.target.closest("button")?.dataset.act;
+    if (!act) return;
+    if (act === "next") shown++;
+    if (act === "all") { stop(); shown = run.events.length; }
+    if (act === "restart") { stop(); shown = 1; }
+    if (act === "play") {
+      if (timer) stop();
+      else timer = setInterval(() => { shown++; render(false); }, 1100);
+    }
+    render(act === "all" || act === "restart");
+  });
+  history.replaceState(null, "", `#run-${i + 1}`);
+  render(true);
+}
+
+function picker() {
+  const ul = document.getElementById("picker");
+  runs.forEach((r, i) => {
+    const kind = outcomeKind(r);
+    ul.append(el("li", {}, el("button", { type: "button", "aria-pressed": "false" },
+      el("span", { class: `mark is-${kind}`, "aria-hidden": "true" }), r.class_label,
+      el("span", { class: "flag" }, `${r.flag}, ${COLUMNS[r.column]}`))));
+    ul.lastChild.firstChild.addEventListener("click", () => choose(i));
+  });
+}
+
+fetch("runs.json").then(r => { if (!r.ok) throw new Error(`runs.json: HTTP ${r.status}`); return r.json(); }).then(doc => {
+  headline(doc.headline || []);
+  runs = doc.runs || [];
+  document.getElementById("rule").textContent = `Which runs: ${doc.rule}.`;
+  picker();
+  const m = /^#run-(\d+)$/.exec(location.hash);
+  const i = m ? Math.min(Math.max(+m[1] - 1, 0), runs.length - 1) : 0;
+  if (runs.length) choose(i);
+}).catch(err => {
+  document.getElementById("run").replaceChildren(el("p", { class: "error" },
+    `The recorded runs didn't load (${err.message}). Open the page from a web server, not as a local file: ` +
+    "python -m http.server -d site, then http://localhost:8000."));
+});
+</script>
+</body>
+</html>
