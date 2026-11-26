@@ -16,6 +16,11 @@ from test_remediate import FakeFlags, StubVerifier
 PG = os.environ.get("DRISHTI_TEST_POSTGRES_URL", "")
 
 
+def deps_events(deps, id):
+    """The stored events of one run, straight from the agent's Postgres."""
+    return service.Store(deps.pool).events(id)
+
+
 class AlertAPI(API):
     """The fake query API, with one alert under a test's own id."""
 
@@ -95,6 +100,25 @@ class Service(unittest.TestCase):
         v = self.wait(id, "finished")
         self.assertEqual((v["approval"]["approve"], self.flags.writes), (False, 0))
         self.assertEqual(self.c.post(f"/v1/investigations/{id}/decision", json={"approve": True, "by": "x"}).status_code, 409)
+
+    def test_a_setup_failure_is_recorded_not_left_running(self):
+        """Patch 91: the run's setup (query API, recheck settings) is inside the try. On 26 Nov a NameError there killed
+        the thread before it, and the run stayed "running" forever with no event saying why."""
+        from fastapi.testclient import TestClient
+        calls = []
+
+        def factory(base, until):          # the first call is create() looking up the alert; the second is the run's
+            calls.append(until)
+            if len(calls) > 1:
+                raise RuntimeError("setup broke")
+            return AlertAPI(graph_series())
+        deps = service.Deps(cfg=service.Config(postgres=PG, queryapi="http://fake"), llm=ByContent(self.log),
+                            flags=self.flags, verifier=self.ver, api_factory=factory)
+        c = TestClient(service.create_app(deps))
+        id = c.post("/v1/investigations", json={"anomaly_id": AlertAPI.aid}).json()["id"]
+        self.wait(id, "failed", client=c)
+        self.assertTrue(any(e.get("type") == "failed" and "setup broke" in e.get("error", "")
+                            for _, e in deps_events(deps, id)))
 
     def test_unknown_alert(self):
         self.assertEqual(self.c.post("/v1/investigations", json={"anomaly_id": "nope"}).status_code, 404)

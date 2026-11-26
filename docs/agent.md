@@ -393,6 +393,13 @@ to end unsure, the investigation looks again two minutes after the page instead.
 - **Controls:** `--recheck-minutes off` (no second look) and `--recheck-minutes 0` (the same extra round at the page's
   moment: separates more time from more calls).
 - The prompts changed (the second look's message), so GRAPH_PROMPT_VERSION changed; the Week 5 prompts didn't.
+- **Live-service bug, fixed after the freeze (patch 91, 26 Nov).** This patch used `graph.RECHECK_MINUTES` in
+  `service.py` without importing `graph`, so from 21 Nov every live investigation died at its first line, before the
+  `try` that records failures: the run stayed "running" with no event. Found on the first live run since (the Week 8
+  video). The service tests catch it but need Postgres (`DRISHTI_TEST_POSTGRES_URL`) and had been skipped on every run;
+  4 of them fail on the old code. Fixed: the import, and the run's setup moved inside the `try` (a new test makes setup
+  fail and expects "failed"). The eval runner never imports `service.py`, so capture C (scored from `cea7a44`) is
+  unaffected, but the code hash now differs from `agent/FROZEN.json`: a held-out re-run must check out `cea7a44`.
 
 ## 13. Every report ranks three services (patch 77, Week 7 design G4)
 
