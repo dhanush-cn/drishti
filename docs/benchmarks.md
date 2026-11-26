@@ -1,6 +1,6 @@
 # Benchmark report v1 (Week 3, 21–23 Oct 2026)
 
-**Status: internal.** Every number here was measured on one laptop, with provisional PASS/FAIL thresholds (`docs/loadgen.md` §13) and no Pass 2 metadata yet (`partitions.json`, per-container `containers.csv`). Nothing here goes on a résumé or README until those are settled. What the report does claim: each number was measured, repeated (×3 unless stated), and the bottleneck behind it is identified.
+**Status: internal.** Every number here was measured on one laptop, with provisional PASS/FAIL thresholds (`docs/loadgen.md` §13) and no Pass 2 metadata yet (`partitions.json`, per-container `containers.csv`). Those are still not settled. **Decided 26 Nov 2026:** the README and résumé may quote these numbers, labelled "internal, provisional thresholds" and linked here; promoting them (thresholds written, Pass 2 metadata, runs committed under `bench/results/`) is still open. What the report does claim: each number was measured, repeated (×3 unless stated), and the bottleneck behind it is identified.
 
 Raw data: `Downloads/drishti-week3/results-3b/` (driver `week3b.sh`, summary `WEEK3-RESULTS.md`). Design records: `docs/receiver.md`, `docs/storage.md`, `docs/loadgen.md`.
 

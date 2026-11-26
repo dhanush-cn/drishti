@@ -7,7 +7,7 @@ Design record for the synthetic OTLP load generator, decided 11 Oct 2026. It fol
 **This doc describes the full tool; it ships in two passes.**
 - **Pass 1 (Week 1, first honest number):** open-loop arithmetic schedule with catch-up bursts (§3); latency from due time into HdrHistogram with plain `RecordValue` (§4); `-timeout`, `-inflight` with saturation counting, warm-up split, and end-of-window drain (§3–4); payload pool with `-services`, templated log bodies, gzip, and `run_id` (§6); the computed verdict with all §10 conditions, written to `run.json` plus `latency.hlog` (§9–10). **Logs only first**; metrics follow in the same week if time allows. Pass 1 gives a defensible single-rate PASS/FAIL.
 - **Pass 2 (as the week allows, otherwise Weeks 2–3):** `partitions.json` with kadm and the shared partitioner (§7); `intervals.csv`; `env.json` capture; `bench.sh` pre-flight and `docker stats` sampling (§11); 3-repeat sweeps (§10); the template manifest (§6); `-conns > 1` (§5); closed-loop probe mode (§2). Pass 2 turns it into a reproducible benchmark.
-- **Pass 1 numbers are internal.** Promotion to `bench/results/` (§9) requires `env.json`, including the dirty flag, and the 3-repeat rule (§10). Both are Pass 2, so no Pass 1 number goes into the README.
+- **Pass 1 numbers are internal.** Promotion to `bench/results/` (§9) requires `env.json`, including the dirty flag, and the 3-repeat rule (§10). Both are Pass 2, so no Pass 1 number goes into the README. (The Week 3–4 numbers in `docs/benchmarks.md` and `docs/storage.md` are quoted in the README as provisional, decided 26 Nov 2026; see the benchmarks.md status line.)
 - **Pass 1 still records provenance:** the git commit and dirty flag are passed as image build args and written into `run.json`. This is for traceability, not quotability: a Pass 1 run found in `bench/runs/` weeks later can always be tied to the exact code that produced it.
 
 ---
@@ -150,7 +150,7 @@ One directory per run: `bench/runs/<UTC-timestamp>-<run_id>/`
 | `templates.json` | Drain manifest: template ID → string, count this run (logs runs) |
 | `containers.csv` | Sampled CPU and memory per container, generator included |
 
-**Promotion:** `bench/runs/` is gitignored. To quote a number, copy its run directory into `bench/results/` and commit it. Every number in the README links to a committed `run.json`. **A run from a dirty tree can't be promoted.** This makes "only real, measured numbers" a mechanical rule.
+**Promotion:** `bench/runs/` is gitignored. To quote a number, copy its run directory into `bench/results/` and commit it. Every promoted number links to a committed `run.json` (until then, the README links to the doc section and says "provisional"). **A run from a dirty tree can't be promoted.** This makes "only real, measured numbers" a mechanical rule.
 
 ## 10. Verdict, repeats, and the sustainable rate
 
