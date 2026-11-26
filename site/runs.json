@@ -1,0 +1,1460 @@
+{
+ "version": 1,
+ "rule": "graph, end-to-end, run 0 (else 1, else 2), lowest-numbered scored scenario per outcome class; plus one agent-only run right at the first look (Week 8 design H2)",
+ "sources": [
+  {
+   "name": "replay",
+   "file": "graph-011b9a0338f5/runs.jsonl",
+   "md5": "7d8e4fb172623ba3096bd05cb6a737d1"
+  },
+  {
+   "name": "graph",
+   "file": "graph-011b9a0338f5/runs.jsonl",
+   "md5": "7d8e4fb172623ba3096bd05cb6a737d1"
+  },
+  {
+   "name": "v0",
+   "file": "v0-011b9a0338f5/runs.jsonl",
+   "md5": "4469ba35e1cf4547abb8e7845821b158"
+  },
+  {
+   "name": "baseline",
+   "file": "baseline-011b9a0338f5/runs.jsonl",
+   "md5": "3eeccc96abdd3a8cf6062424e69b4578"
+  },
+  {
+   "name": "floor",
+   "file": "floor-011b9a0338f5/runs.jsonl",
+   "md5": "9f5e037eafe321e6743149ea05a2f58d"
+  }
+ ],
+ "headline": [
+  {
+   "system": "graph",
+   "end_to_end": {
+    "n": 33,
+    "top1": 21,
+    "top3": 28,
+    "unsure": 2,
+    "confidently_wrong": 10,
+    "invalid": 0,
+    "gives_confidence": true
+   },
+   "agent_only": {
+    "n": 33,
+    "top1": 25,
+    "top3": 30,
+    "unsure": 5,
+    "confidently_wrong": 3,
+    "invalid": 0,
+    "gives_confidence": true
+   }
+  },
+  {
+   "system": "v0",
+   "end_to_end": {
+    "n": 33,
+    "top1": 13,
+    "top3": 21,
+    "unsure": 13,
+    "confidently_wrong": 7,
+    "invalid": 3,
+    "gives_confidence": true
+   },
+   "agent_only": {
+    "n": 33,
+    "top1": 24,
+    "top3": 25,
+    "unsure": 1,
+    "confidently_wrong": 8,
+    "invalid": 1,
+    "gives_confidence": true
+   }
+  },
+  {
+   "system": "baseline",
+   "end_to_end": {
+    "n": 33,
+    "top1": 18,
+    "top3": 22,
+    "unsure": 5,
+    "confidently_wrong": 10,
+    "invalid": 2,
+    "gives_confidence": true
+   },
+   "agent_only": {
+    "n": 33,
+    "top1": 18,
+    "top3": 27,
+    "unsure": 2,
+    "confidently_wrong": 12,
+    "invalid": 2,
+    "gives_confidence": true
+   }
+  },
+  {
+   "system": "floor",
+   "end_to_end": {
+    "n": 33,
+    "top1": 18,
+    "top3": 24,
+    "unsure": 0,
+    "confidently_wrong": 0,
+    "invalid": 0,
+    "gives_confidence": false
+   },
+   "agent_only": {
+    "n": 33,
+    "top1": 15,
+    "top3": 24,
+    "unsure": 0,
+    "confidently_wrong": 0,
+    "invalid": 0,
+    "gives_confidence": false
+   }
+  }
+ ],
+ "runs": [
+  {
+   "class": "right_first",
+   "class_label": "Right at the first look",
+   "flag": "paymentFailure",
+   "scenario": 3,
+   "column": "end-to-end",
+   "run": 0,
+   "system": "graph",
+   "label_services": [
+    "payment"
+   ],
+   "score": {
+    "top1": true,
+    "top3": true,
+    "fault": true,
+    "unsure": false,
+    "confidently_wrong": false,
+    "named": "payment",
+    "confidence": 0.9
+   },
+   "alert": "You were paged at 2026-11-21T06:20:00.000000Z by the detector's alert: service payment, rule log_template_new (severity=warn, template_id=0), opened at 2026-11-21T06:20:00Z.",
+   "stats": {
+    "model_requests": 3,
+    "tool_calls": 4,
+    "seconds": 34.69,
+    "tokens_in": 17272,
+    "tokens_out": 245
+   },
+   "events": [
+    {
+     "type": "candidates",
+     "look": 1,
+     "paged": "payment",
+     "p_onset": "2026-11-21T06:19:35.000000Z",
+     "calls": 4,
+     "candidates": [
+      {
+       "service": "payment",
+       "relation": "paged",
+       "depth": 0,
+       "own_change": [
+        "server error ratio 0.333 (was 0.000)",
+        "SERVER oteldemo.PaymentService/Charge error ratio 0.333 (was 0)"
+       ],
+       "onset": "2026-11-21T06:19:30Z",
+       "trend": "worsening"
+      },
+      {
+       "service": "checkout",
+       "relation": "changed (no edge)",
+       "depth": 0,
+       "own_change": [
+        "server error ratio 0.333 (was 0.000)"
+       ],
+       "onset": "2026-11-21T06:19:30Z",
+       "trend": "worsening"
+      }
+     ]
+    },
+    {
+     "type": "hypotheses",
+     "round": 1,
+     "items": [
+      {
+       "id": "h1",
+       "service": "payment",
+       "fault_type": "error",
+       "prior": 0.8,
+       "why": "Payment service server error ratio increased to 0.333 and log template indicates payment request failed."
+      },
+      {
+       "id": "h2",
+       "service": "checkout",
+       "fault_type": "error",
+       "prior": 0.5,
+       "why": "Checkout service also shows server error ratio 0.333 and calls payment."
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "spans",
+       "arguments": {
+        "service": "payment"
+       }
+      },
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "payment"
+       }
+      },
+      {
+       "name": "timeseries",
+       "arguments": {
+        "signal": "error_ratio",
+        "service": "payment"
+       }
+      },
+      {
+       "name": "timeseries",
+       "arguments": {
+        "signal": "calls",
+        "service": "payment"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t1",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"SERVER\",\"span\":\"oteldemo.PaymentService/Charge\",\"calls_per_min\":{\"window\":1.8,\"baseline\":…"
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t2",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:19:55.279Z\",\"severity\":\"warn\",\"body\":\"Payment request failed. Invalid token. d…"
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t3",
+       "name": "timeseries",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":{\"service\":\"payment\",\"signal\":\"error_ratio\",\"kind\":\"server\",\"unit\":\"ratio\",\"step\":\"1m0s\",\"points\":[…"
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t4",
+       "name": "timeseries",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":{\"service\":\"payment\",\"signal\":\"calls\",\"kind\":\"server\",\"unit\":\"server calls per step\",\"step\":\"1m0s\",…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h1",
+     "service": "payment",
+     "judge": "h1 accepted: payment (error), confidence 0.90",
+     "status": "supported",
+     "confidence": 0.9,
+     "evidence": [
+      "t1",
+      "t2",
+      "t3"
+     ],
+     "summary": "Payment service started failing requests with 'Invalid token' errors during charge calls."
+    },
+    {
+     "type": "diagnosis",
+     "valid": true,
+     "diagnosis": {
+      "root_cause_service": "payment",
+      "fault_type": "error",
+      "confidence": 0.9,
+      "ranked_services": [
+       "payment",
+       "checkout"
+      ],
+      "summary": "Payment service started failing requests with 'Invalid token' errors during charge calls.",
+      "ruled_out": []
+     }
+    },
+    {
+     "type": "proposal",
+     "proposal": {
+      "action": "rollback_config",
+      "service": "payment",
+      "why": "diagnosed root cause: payment (error), confidence 0.9"
+     },
+     "executed": false,
+     "note": "remediation is off in eval runs: this is what the live service would propose, not executed"
+    }
+   ]
+  },
+  {
+   "class": "right_second",
+   "class_label": "Unsure at the first look, right after the second",
+   "flag": "adFailure",
+   "scenario": 1,
+   "column": "end-to-end",
+   "run": 0,
+   "system": "graph",
+   "label_services": [
+    "ad"
+   ],
+   "score": {
+    "top1": true,
+    "top3": true,
+    "fault": true,
+    "unsure": false,
+    "confidently_wrong": false,
+    "named": "ad",
+    "confidence": 0.95
+   },
+   "alert": "You were paged at 2026-11-21T06:05:25.000000Z by the detector's alert: service frontend, rule log_template_new (severity=error, template_id=0), opened at 2026-11-21T06:05:25Z.",
+   "stats": {
+    "model_requests": 11,
+    "tool_calls": 6,
+    "seconds": 122.84,
+    "tokens_in": 57597,
+    "tokens_out": 500
+   },
+   "events": [
+    {
+     "type": "hypotheses",
+     "round": 1,
+     "items": [
+      {
+       "id": "h1",
+       "service": "payment",
+       "fault_type": "error",
+       "prior": 0.8,
+       "why": "Payment service shows a rapid memory increase (9.7 MiB/min), which indicates a memory leak or OOM risk."
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "timeseries",
+       "arguments": {
+        "signal": "memory_mib",
+        "window": "30m",
+        "service": "payment"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t1",
+       "name": "timeseries",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"30m0s\",\"baseline\":\"30m0s\",\"data\":{\"service\":\"payment\",\"signal\":\"memory_mib\",\"unit\":\"MiB\",\"step\":\"1m0s\",\"points\":[{\"t\":\"2026-11-21T05…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "frontend",
+        "window": "10m"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t2",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:05:24.41Z\",\"severity\":\"info\",\"body\":\"API request completed\",\"attributes\":{\"htt…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "spans",
+       "arguments": {
+        "window": "10m",
+        "service": "frontend"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t3",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"SERVER\",\"span\":\"GET /api/products/index\",\"calls_per_min\":{\"window\":28.8,\"baseline\":20.533…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "log_templates",
+       "arguments": {
+        "service": "frontend",
+        "window": "10m"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t4",
+       "name": "log_templates",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":{\"service\":\"frontend\",\"lines_read\":5939,\"truncated\":false,\"templates\":[{\"template\":\"API request <*>…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h1",
+     "service": "payment",
+     "judge": "h1 payment: inconclusive (no cited evidence is about payment itself)",
+     "status": "inconclusive",
+     "confidence": 0.8,
+     "evidence": [
+      "page",
+      "t2",
+      "t4"
+     ],
+     "summary": "Frontend itself logged the new error template 'API request failed' when handling failed requests (UNAVAILABLE)."
+    },
+    {
+     "type": "hypotheses",
+     "round": 2,
+     "items": []
+    },
+    {
+     "type": "recheck",
+     "until": "2026-11-21T06:07:25.000000Z",
+     "minutes": 2.0,
+     "changed": [
+      "frontend",
+      "ad"
+     ],
+     "superseded": [],
+     "judge": "first look unsure: looking again at 2026-11-21T06:07:25.000000Z (new own changes: frontend, ad)"
+    },
+    {
+     "type": "candidates",
+     "look": 2,
+     "paged": "frontend",
+     "p_onset": "2026-11-21T06:05:20.000000Z",
+     "calls": 5,
+     "candidates": [
+      {
+       "service": "frontend",
+       "relation": "paged",
+       "depth": 0,
+       "own_change": [
+        "SERVER GET /api/data error ratio 0.121 (was 0)"
+       ],
+       "onset": null,
+       "trend": "holding"
+      },
+      {
+       "service": "ad",
+       "relation": "callee",
+       "depth": 1,
+       "own_change": [
+        "server error ratio 0.089 (was 0.000)",
+        "SERVER oteldemo.AdService/GetAds error ratio 0.121 (was 0)"
+       ],
+       "onset": "2026-11-21T06:05:30Z",
+       "trend": "worsening"
+      }
+     ]
+    },
+    {
+     "type": "hypotheses",
+     "round": 3,
+     "items": [
+      {
+       "id": "h2",
+       "service": "ad",
+       "fault_type": "error",
+       "prior": 0.9,
+       "why": "Ad service shows server error ratio 0.089 and its AdService/GetAds has error ratio 0.121, matching frontend's client errors calling ad."
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h2",
+     "calls": [
+      {
+       "name": "spans",
+       "arguments": {
+        "service": "ad"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t5",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"SERVER\",\"span\":\"oteldemo.AdService/GetAds\",\"calls_per_min\":{\"window\":18.3,\"baseline\":14.3…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h2",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "ad"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t6",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:07:23.68Z\",\"severity\":\"INFO\",\"body\":\"Targeted ad request received for [binocul…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h2",
+     "service": "ad",
+     "judge": "h2 accepted: ad (error), confidence 0.95",
+     "status": "supported",
+     "confidence": 0.95,
+     "evidence": [
+      "t5",
+      "t6"
+     ],
+     "summary": "Ad service itself experienced server errors (GetAds failing with UNAVAILABLE) starting at 2026-11-21T06:05:30Z, causing frontend client errors."
+    },
+    {
+     "type": "judge",
+     "verdict": "round 2: no untested hypothesis left"
+    },
+    {
+     "type": "diagnosis",
+     "valid": true,
+     "diagnosis": {
+      "root_cause_service": "ad",
+      "fault_type": "error",
+      "confidence": 0.95,
+      "ranked_services": [
+       "ad",
+       "payment",
+       "frontend"
+      ],
+      "summary": "Ad service itself experienced server errors (GetAds failing with UNAVAILABLE) starting at 2026-11-21T06:05:30Z, causing frontend client errors.",
+      "ruled_out": [
+       "payment (error): inconclusive: Frontend itself logged the new error template 'API request failed' when handling failed requests (UNAVAILABLE). [judge: no cited …"
+      ]
+     }
+    },
+    {
+     "type": "proposal",
+     "proposal": {
+      "action": "rollback_config",
+      "service": "ad",
+      "why": "diagnosed root cause: ad (error), confidence 0.95"
+     },
+     "executed": false,
+     "note": "remediation is off in eval runs: this is what the live service would propose, not executed"
+    }
+   ]
+  },
+  {
+   "class": "conf_wrong",
+   "class_label": "Confidently wrong",
+   "flag": "imageSlowLoad",
+   "scenario": 8,
+   "column": "end-to-end",
+   "run": 0,
+   "system": "graph",
+   "label_services": [
+    "frontend-proxy"
+   ],
+   "score": {
+    "top1": false,
+    "top3": true,
+    "fault": false,
+    "unsure": false,
+    "confidently_wrong": true,
+    "named": "ad",
+    "confidence": 0.85
+   },
+   "alert": "You were paged at 2026-11-21T06:54:45.000000Z by the detector's alert: service frontend-proxy, rule span_slow (span.kind=SERVER, span.name=GET), opened at 2026-11-21T06:54:45Z.",
+   "stats": {
+    "model_requests": 3,
+    "tool_calls": 1,
+    "seconds": 47.43,
+    "tokens_in": 18170,
+    "tokens_out": 194
+   },
+   "events": [
+    {
+     "type": "candidates",
+     "look": 1,
+     "paged": "frontend-proxy",
+     "p_onset": "2026-11-21T06:54:30Z",
+     "calls": 3,
+     "candidates": [
+      {
+       "service": "frontend-proxy",
+       "relation": "paged",
+       "depth": 0,
+       "own_change": [],
+       "onset": null,
+       "trend": null
+      }
+     ]
+    },
+    {
+     "type": "hypotheses",
+     "round": 1,
+     "items": [
+      {
+       "id": "h1",
+       "service": "ad",
+       "fault_type": "memory",
+       "prior": 0.8,
+       "why": "ad service shows container memory growth anomaly and GC log templates, indicating a memory leak/pressure."
+      },
+      {
+       "id": "h2",
+       "service": "product-catalog",
+       "fault_type": "latency",
+       "prior": 0.6,
+       "why": "product-catalog has an open slow span anomaly on astronomy-db client."
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "timeseries",
+       "arguments": {
+        "signal": "memory_mib",
+        "service": "ad",
+        "window": "15m"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t1",
+       "name": "timeseries",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"15m0s\",\"baseline\":\"30m0s\",\"data\":{\"service\":\"ad\",\"signal\":\"memory_mib\",\"unit\":\"MiB\",\"step\":\"1m0s\",\"points\":[{\"t\":\"2026-11-21T06:39:0…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h1",
+     "service": "ad",
+     "judge": "h1 accepted: ad (memory), confidence 0.85",
+     "status": "supported",
+     "confidence": 0.85,
+     "evidence": [
+      "t1"
+     ],
+     "summary": "ad service exhibits a steady memory climb towards its limit, confirming the memory leak anomaly."
+    },
+    {
+     "type": "diagnosis",
+     "valid": true,
+     "diagnosis": {
+      "root_cause_service": "ad",
+      "fault_type": "memory",
+      "confidence": 0.85,
+      "ranked_services": [
+       "ad",
+       "product-catalog",
+       "frontend-proxy"
+      ],
+      "summary": "ad service exhibits a steady memory climb towards its limit, confirming the memory leak anomaly.",
+      "ruled_out": []
+     }
+    },
+    {
+     "type": "proposal",
+     "proposal": {
+      "action": "rollback_config",
+      "service": "ad",
+      "why": "diagnosed root cause: ad (memory), confidence 0.85"
+     },
+     "executed": false,
+     "note": "remediation is off in eval runs: this is what the live service would propose, not executed"
+    }
+   ]
+  },
+  {
+   "class": "unsure",
+   "class_label": "Unsure at the end",
+   "flag": "adHighCpu",
+   "scenario": 5,
+   "column": "end-to-end",
+   "run": 0,
+   "system": "graph",
+   "label_services": [
+    "ad"
+   ],
+   "score": {
+    "top1": false,
+    "top3": true,
+    "fault": false,
+    "unsure": true,
+    "confidently_wrong": false,
+    "named": null,
+    "confidence": 0.0
+   },
+   "alert": "You were paged at 2026-11-21T06:33:30.000000Z by the detector's alert: service ad, rule log_template_spike (severity=info, template_id=3), opened at 2026-11-21T06:33:30Z.",
+   "stats": {
+    "model_requests": 20,
+    "tool_calls": 14,
+    "seconds": 314.34,
+    "tokens_in": 109367,
+    "tokens_out": 925
+   },
+   "events": [
+    {
+     "type": "hypotheses",
+     "round": 1,
+     "items": [
+      {
+       "id": "h1",
+       "service": "ad",
+       "fault_type": "error",
+       "prior": 0.5,
+       "why": "Paged service ad has a log template spike about fault injection starting around 06:28:30Z."
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "ad",
+        "window": "10m"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t1",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":3,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:33:26.719Z\",\"severity\":\"INFO\",\"body\":\"Targeted ad request received for [binocu…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "runbook",
+       "arguments": {
+        "service": "ad"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t2",
+       "name": "runbook",
+       "ok": true,
+       "summary": "# ad ## relations ad serves short text ads for the page a user is viewing. It calls nothing (no other service). It is called by frontend. ## error Look at ad's …"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h1",
+     "service": "ad",
+     "judge": "h1 ad: refuted",
+     "status": "refuted",
+     "confidence": 0.9,
+     "evidence": [
+      "t1"
+     ],
+     "summary": "ad's own metrics and server spans show no errors or slowness; its logs show normal ad requests. The log template spike was just a fault injection notice, not an…"
+    },
+    {
+     "type": "hypotheses",
+     "round": 2,
+     "items": [
+      {
+       "id": "h2",
+       "service": "payment",
+       "fault_type": "error",
+       "prior": 0.6,
+       "why": "payment had a new log template about payment request failure (invalid token) starting at 06:20, preceding frontend checkout errors at 06:27."
+      },
+      {
+       "id": "h3",
+       "service": "frontend",
+       "fault_type": "error",
+       "prior": 0.4,
+       "why": "frontend had span errors on POST /api/checkout starting at 06:27:20."
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h2",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "window": "15m",
+        "service": "payment"
+       }
+      },
+      {
+       "name": "spans",
+       "arguments": {
+        "service": "payment",
+        "window": "15m"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t3",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"15m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:32:24.877Z\",\"severity\":\"info\",\"body\":\"Transaction complete.\",\"attributes\":{\"am…"
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t4",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"15m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"SERVER\",\"span\":\"oteldemo.PaymentService/Charge\",\"calls_per_min\":{\"window\":1.2,\"baseline\":…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h2",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "frontend",
+        "window": "15m"
+       }
+      },
+      {
+       "name": "spans",
+       "arguments": {
+        "window": "15m",
+        "service": "frontend"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t5",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"15m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:33:27.958Z\",\"severity\":\"info\",\"body\":\"API request completed\",\"attributes\":{\"ht…"
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t6",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"15m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"CLIENT\",\"span\":\"oteldemo.CheckoutService/PlaceOrder\",\"callee\":\"checkout\",\"calls_per_min\":…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h2",
+     "service": "payment",
+     "judge": "h2 payment: refuted",
+     "status": "refuted",
+     "confidence": 0.8,
+     "evidence": [
+      "t3",
+      "t4"
+     ],
+     "summary": "Payment service logs show normal transactions completing successfully and its error ratio is very low, refuting it as the root cause."
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h3",
+     "calls": [
+      {
+       "name": "spans",
+       "arguments": {
+        "service": "frontend"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t7",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"SERVER\",\"span\":\"POST /api/checkout\",\"calls_per_min\":{\"window\":3.8,\"baseline\":3.867},\"erro…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h3",
+     "service": "frontend",
+     "judge": "h3 frontend: refuted",
+     "status": "refuted",
+     "confidence": 0.85,
+     "evidence": [
+      "t7"
+     ],
+     "summary": "Frontend experiences errors on POST /api/checkout and client span oteldemo.CheckoutService/PlaceOrder calling checkout, pointing to checkout as the root cause."
+    },
+    {
+     "type": "hypotheses",
+     "round": 3,
+     "items": [
+      {
+       "id": "h4",
+       "service": "checkout",
+       "fault_type": "error",
+       "prior": 0.8,
+       "why": "Frontend has span errors on POST /api/checkout and logs 'Checkout failed to place order', and checkout calls downstream services or handles checkout logic where…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h4",
+     "calls": [
+      {
+       "name": "spans",
+       "arguments": {
+        "service": "checkout"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t8",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"SERVER\",\"span\":\"oteldemo.CheckoutService/PlaceOrder\",\"calls_per_min\":{\"window\":1.9,\"basel…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h4",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "checkout"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t9",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:32:24.887Z\",\"severity\":\"INFO\",\"body\":\"order confirmation email sent\"},{\"t\":\"20…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h4",
+     "calls": [
+      {
+       "name": "spans",
+       "arguments": {
+        "service": "payment"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t10",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"CLIENT\",\"span\":\"dns.lookup\",\"calls_per_min\":{\"window\":0,\"baseline\":0},\"error_ratio\":{},\"p…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h4",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "payment"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t11",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:32:24.877Z\",\"severity\":\"info\",\"body\":\"Transaction complete.\",\"attributes\":{\"am…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h4",
+     "service": "checkout",
+     "judge": null,
+     "status": "inconclusive",
+     "confidence": null,
+     "evidence": [],
+     "summary": ""
+    },
+    {
+     "type": "recheck",
+     "until": "2026-11-21T06:35:30.000000Z",
+     "minutes": 2.0,
+     "changed": [],
+     "superseded": [
+      "h4"
+     ],
+     "judge": "first look unsure: looking again at 2026-11-21T06:35:30.000000Z"
+    },
+    {
+     "type": "candidates",
+     "look": 2,
+     "paged": "ad",
+     "p_onset": "2026-11-21T06:28:30.000000Z",
+     "calls": 2,
+     "candidates": [
+      {
+       "service": "ad",
+       "relation": "paged",
+       "depth": 0,
+       "own_change": [],
+       "onset": null,
+       "trend": null
+      }
+     ]
+    },
+    {
+     "type": "hypotheses",
+     "round": 4,
+     "items": [
+      {
+       "id": "h5",
+       "service": "ad",
+       "fault_type": "cpu",
+       "prior": 0.7,
+       "why": "Ad service CPU jumped from 0.169 to 0.698, and a log template spike indicates fault injection or heavy processing in the ad service around the time of the incid…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h5",
+     "calls": [
+      {
+       "name": "timeseries",
+       "arguments": {
+        "service": "ad",
+        "signal": "cpu",
+        "window": "15m"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t12",
+       "name": "timeseries",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"15m0s\",\"baseline\":\"30m0s\",\"data\":{\"service\":\"ad\",\"signal\":\"cpu\",\"unit\":\"container cpu utilization\",\"step\":\"1m0s\",\"points\":[{\"t\":\"202…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h5",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "window": "15m",
+        "service": "ad"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t13",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":42,\"window\":\"15m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:35:22.405Z\",\"severity\":\"INFO\",\"body\":\"Targeted ad request received for [binoc…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h5",
+     "calls": [
+      {
+       "name": "runbook",
+       "arguments": {
+        "service": "ad"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t14",
+       "name": "runbook",
+       "ok": true,
+       "summary": "# ad ## relations ad serves short text ads for the page a user is viewing. It calls nothing (no other service). It is called by frontend. ## error Look at ad's …"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h5",
+     "service": "ad",
+     "judge": "h5 ad: refuted",
+     "status": "refuted",
+     "confidence": 0.9,
+     "evidence": [
+      "t12",
+      "t13"
+     ],
+     "summary": "Ad service CPU is climbing due to fault injection, but its requests complete successfully with zero errors and it does not affect checkout or cause the incident…"
+    },
+    {
+     "type": "judge",
+     "verdict": "model-call cap (15) reached"
+    },
+    {
+     "type": "judge",
+     "verdict": "stop: 4 rounds of hypotheses"
+    },
+    {
+     "type": "diagnosis",
+     "valid": true,
+     "diagnosis": {
+      "root_cause_service": null,
+      "fault_type": "unknown",
+      "confidence": 0.0,
+      "ranked_services": [
+       "checkout",
+       "ad"
+      ],
+      "summary": "unsure: stop: 4 rounds of hypotheses",
+      "ruled_out": [
+       "ad (error): refuted: ad's own metrics and server spans show no errors or slowness; its logs show normal ad requests. The log template spike was just a fault inj…",
+       "payment (error): refuted: Payment service logs show normal transactions completing successfully and its error ratio is very low, refuting it as the root cause.",
+       "frontend (error): refuted: Frontend experiences errors on POST /api/checkout and client span oteldemo.CheckoutService/PlaceOrder calling checkout, pointing to c…",
+       "checkout (error): inconclusive [judge: not tested: superseded by the second look]",
+       "ad (cpu): refuted: Ad service CPU is climbing due to fault injection, but its requests complete successfully with zero errors and it does not affect checkout or…"
+      ]
+     }
+    },
+    {
+     "type": "proposal",
+     "proposal": null,
+     "executed": false,
+     "note": "remediation is off in eval runs: this is what the live service would propose, not executed"
+    }
+   ]
+  },
+  {
+   "class": "right_first",
+   "class_label": "Right at the first look",
+   "flag": "adFailure",
+   "scenario": 1,
+   "column": "agent-only",
+   "run": 0,
+   "system": "graph",
+   "label_services": [
+    "ad"
+   ],
+   "score": {
+    "top1": true,
+    "top3": true,
+    "fault": true,
+    "unsure": false,
+    "confidently_wrong": false,
+    "named": "ad",
+    "confidence": 0.95
+   },
+   "alert": "An incident was reported at 2026-11-21T06:09:14.710000Z; no single alert identifies it.",
+   "stats": {
+    "model_requests": 4,
+    "tool_calls": 2,
+    "seconds": 40.39,
+    "tokens_in": 19794,
+    "tokens_out": 176
+   },
+   "events": [
+    {
+     "type": "candidates",
+     "look": 1,
+     "paged": null,
+     "p_onset": null,
+     "calls": 9,
+     "candidates": [
+      {
+       "service": "ad",
+       "relation": "start",
+       "depth": 0,
+       "own_change": [
+        "server error ratio 0.048 (was 0.005)",
+        "SERVER oteldemo.AdService/GetAds error ratio 0.067 (was 0.007)"
+       ],
+       "onset": "2026-11-21T06:05:30Z",
+       "trend": "holding"
+      },
+      {
+       "service": "container:valkey-cart",
+       "relation": "start",
+       "depth": 0,
+       "own_change": [
+        "memory rising 1.6 MiB/min (51% of limit)"
+       ],
+       "onset": null,
+       "trend": "holding"
+      },
+      {
+       "service": "frontend",
+       "relation": "start",
+       "depth": 0,
+       "own_change": [
+        "SERVER GET /api/data error ratio 0.069 (was 0.007)"
+       ],
+       "onset": null,
+       "trend": "holding"
+      },
+      {
+       "service": "quote",
+       "relation": "start",
+       "depth": 0,
+       "own_change": [
+        "memory rising 2.9 MiB/min (64% of limit)"
+       ],
+       "onset": null,
+       "trend": "holding"
+      }
+     ]
+    },
+    {
+     "type": "hypotheses",
+     "round": 1,
+     "items": [
+      {
+       "id": "h1",
+       "service": "ad",
+       "fault_type": "error",
+       "prior": 0.9,
+       "why": "ad shows server error ratio increase, log error spike GetAds Failed with status UNAVAILABLE starting at 06:05:30Z, and frontend fails calling it."
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "spans",
+       "arguments": {
+        "service": "ad"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t1",
+       "name": "spans",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"kind\":\"SERVER\",\"span\":\"oteldemo.AdService/GetAds\",\"calls_per_min\":{\"window\":17.4,\"baseline\":15.5…"
+      }
+     ]
+    },
+    {
+     "type": "tool_calls",
+     "hypothesis": "h1",
+     "calls": [
+      {
+       "name": "logs",
+       "arguments": {
+        "service": "ad"
+       }
+      }
+     ]
+    },
+    {
+     "type": "tool_results",
+     "results": [
+      {
+       "id": "t2",
+       "name": "logs",
+       "ok": true,
+       "summary": "{\"masked_lines\":0,\"window\":\"10m0s\",\"baseline\":\"30m0s\",\"data\":[{\"t\":\"2026-11-21T06:09:14.696Z\",\"severity\":\"WARN\",\"body\":\"GetAds Failed with status Status{code=UN…"
+      }
+     ]
+    },
+    {
+     "type": "verdict",
+     "hypothesis": "h1",
+     "service": "ad",
+     "judge": "h1 accepted: ad (error), confidence 0.95",
+     "status": "supported",
+     "confidence": 0.95,
+     "evidence": [
+      "t1",
+      "t2"
+     ],
+     "summary": "Ad service is failing with UNAVAILABLE errors on GetAds server span and corresponding warning logs."
+    },
+    {
+     "type": "diagnosis",
+     "valid": true,
+     "diagnosis": {
+      "root_cause_service": "ad",
+      "fault_type": "error",
+      "confidence": 0.95,
+      "ranked_services": [
+       "ad",
+       "container:valkey-cart",
+       "frontend"
+      ],
+      "summary": "Ad service is failing with UNAVAILABLE errors on GetAds server span and corresponding warning logs.",
+      "ruled_out": []
+     }
+    },
+    {
+     "type": "proposal",
+     "proposal": {
+      "action": "rollback_config",
+      "service": "ad",
+      "why": "diagnosed root cause: ad (error), confidence 0.95"
+     },
+     "executed": false,
+     "note": "remediation is off in eval runs: this is what the live service would propose, not executed"
+    }
+   ]
+  }
+ ]
+}
