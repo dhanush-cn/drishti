@@ -1,5 +1,7 @@
 # Drishti
 
+[![ci](https://github.com/dhanush-cn/drishti/actions/workflows/ci.yml/badge.svg)](https://github.com/dhanush-cn/drishti/actions/workflows/ci.yml)
+
 Drishti is an observability pipeline in Go and an AI investigator in Python. The pipeline takes OpenTelemetry logs and
 metrics from a running microservices app, stores them in ClickHouse and raises alerts within seconds. When an alert
 fires, a LangGraph agent works out which service caused it, using typed queries against the stored telemetry, and
@@ -170,7 +172,8 @@ scripts/demo-flag.py productCatalogFailure on
 scripts/demo-flag.py productCatalogFailure off
 ```
 
-Tests: `go test ./...` and `cd agent && TZ=UTC python -m unittest discover -s tests`. A few agent tests assume a UTC
+Tests: `go test ./...` and `cd agent && TZ=UTC python -m unittest discover -s tests` (set
+`DRISHTI_TEST_POSTGRES_URL` to run the Postgres tests too; CI runs everything on each push). A few agent tests assume a UTC
 clock and fail on a machine set to another time zone. The replay page runs locally with
 `python -m http.server -d site`.
 

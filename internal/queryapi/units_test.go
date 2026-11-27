@@ -59,7 +59,7 @@ func TestQuantile(t *testing.T) {
 		counts []uint64
 		want   float64
 	}{
-		{0.5, []uint64{0, 10, 0, 0}, 15},  // middle of (10, 20]
+		{0.5, []uint64{0, 10, 0, 0}, 15},   // middle of (10, 20]
 		{0.95, []uint64{90, 10, 0, 0}, 15}, // rank 95 is the 5th of 10 in (10, 20]
 		{0.5, []uint64{10, 0, 0, 0}, 5},    // first bucket from 0
 		{0.95, []uint64{0, 0, 0, 3}, 50},   // open last bucket: its lower bound

@@ -63,9 +63,9 @@ func (f *fixture) metric(res []*commonv1.KeyValue, m *metricsv1.Metric, at time.
 
 func calls(service, kind, span, status string, total float64, at time.Time) (*metricsv1.Metric, []*commonv1.KeyValue) {
 	return &metricsv1.Metric{Name: "traces.span.metrics.calls", Data: &metricsv1.Metric_Sum{Sum: &metricsv1.Sum{IsMonotonic: true,
-		AggregationTemporality: metricsv1.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
-		DataPoints: []*metricsv1.NumberDataPoint{{TimeUnixNano: uint64(at.UnixNano()), StartTimeUnixNano: uint64(t0.Add(-time.Hour).UnixNano()),
-			Attributes: kv("span.kind", kind, "span.name", span, "status.code", status), Value: &metricsv1.NumberDataPoint_AsDouble{AsDouble: total}}}}}},
+			AggregationTemporality: metricsv1.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+			DataPoints: []*metricsv1.NumberDataPoint{{TimeUnixNano: uint64(at.UnixNano()), StartTimeUnixNano: uint64(t0.Add(-time.Hour).UnixNano()),
+				Attributes: kv("span.kind", kind, "span.name", span, "status.code", status), Value: &metricsv1.NumberDataPoint_AsDouble{AsDouble: total}}}}}},
 		kv("service.name", service)
 }
 
@@ -131,7 +131,7 @@ func build() *fixture {
 	}
 	ev("a1", "payment", "opened", "", until.Add(-8*time.Minute), until.Add(-8*time.Minute))
 	ev("a1", "payment", "resolved", "", until.Add(-8*time.Minute), until.Add(time.Minute)) // resolves after until: still open as of until
-	ev("a2", "checkout", "opened", "", until.Add(time.Minute), until.Add(time.Minute))    // future
+	ev("a2", "checkout", "opened", "", until.Add(time.Minute), until.Add(time.Minute))     // future
 	ev("a3", "ad", "opened", "Feature Flag adManualGc enabled, performing a manual gc now", until.Add(-5*time.Minute), until.Add(-5*time.Minute))
 	ev("a4", "load-generator", "opened", "", until.Add(-5*time.Minute), until.Add(-5*time.Minute))
 	return f
