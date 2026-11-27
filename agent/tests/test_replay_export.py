@@ -208,9 +208,12 @@ class Page(unittest.TestCase):
 
     def test_no_third_party_requests(self):
         import re
-        urls = re.findall(r"""(?:src|href)=["'](https?://[^"']+)""", self.PAGE.read_text())
-        self.assertTrue(all(u.startswith("https://github.com/dhanush-cn/drishti") for u in urls), urls)
-        self.assertNotIn("@import", self.PAGE.read_text())
+        page = self.PAGE.read_text()
+        self.assertEqual(re.findall(r"""src=["'](https?://[^"']+)""", page), [], "the page loads nothing from elsewhere")
+        self.assertNotIn("@import", page)
+        links = re.findall(r"""href=["'](https?://[^"']+)""", page)    # links the reader may follow: repo and video only
+        self.assertTrue(all(u.startswith("https://github.com/dhanush-cn/drishti") or u == "https://youtu.be/Q3YHTMzR-wU"
+                            for u in links), links)
 
 
 if __name__ == "__main__":

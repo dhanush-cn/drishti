@@ -5,6 +5,9 @@ metrics from a running microservices app, stores them in ClickHouse and raises a
 fires, a LangGraph agent works out which service caused it, using typed queries against the stored telemetry, and
 proposes a fix that waits for a person to approve it.
 
+**[Watch one live run](https://youtu.be/Q3YHTMzR-wU)** (2:47): a fault is switched on, the detector alerts, the agent
+diagnoses it, a person approves the fix and the recovery is checked. One run, not an accuracy measurement.
+
 **[Step through recorded investigations](https://dhanush-cn.github.io/drishti/)**: real runs on a recording the agent
 was never tuned on, including the ones it got wrong.
 
